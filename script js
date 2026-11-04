@@ -1,1 +1,40 @@
 
+/* =====================================
+   FORGOTTEN AI STUDIO V2.0
+   Main JavaScript
+===================================== */
+
+document.addEventListener("DOMContentLoaded", () => {
+    console.log("Forgotten AI Studio V2.0 Loaded");
+
+    // Mobile navigation
+    const menuButton = document.querySelector("#menuButton");
+    const navigation = document.querySelector("#navigation");
+
+    if (menuButton && navigation) {
+        menuButton.addEventListener("click", () => {
+            navigation.classList.toggle("active");
+        });
+    }
+
+    // AI Studio form
+    const generateButton = document.querySelector("#generateButton");
+    const promptInput = document.querySelector("#promptInput");
+    const output = document.querySelector("#output");
+
+    if (generateButton && promptInput && output) {
+        generateButton.addEventListener("click", () => {
+            const prompt = promptInput.value.trim();
+
+            if (!prompt) {
+                output.textContent = "Please enter your idea first.";
+                return;
+            }
+
+            output.textContent =
+                "Your idea is ready: " + prompt +
+                "\n\nAI generation API integration is not connected yet.";
+        });
+    }
+});
+
