@@ -1,1 +1,191 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#080b18">
+    <meta name="description" content="Forgotten AI Studio - Your creative AI workspace for stories, scripts, ideas and documentaries.">
+
+    <title>Forgotten AI Studio V2.0</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #080b18;
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        header {
+            padding: 20px;
+            background: #10162b;
+            border-bottom: 1px solid #28304b;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .logo {
+            font-size: 21px;
+            font-weight: bold;
+            color: #8b9cff;
+        }
+
+        .version {
+            color: #9ba6c7;
+            font-size: 12px;
+        }
+
+        main {
+            width: 92%;
+            max-width: 950px;
+            margin: 40px auto;
+        }
+
+        .hero {
+            text-align: center;
+            margin-bottom: 35px;
+        }
+
+        .hero h1 {
+            font-size: clamp(28px, 6vw, 43px);
+            margin-bottom: 12px;
+        }
+
+        .hero p {
+            color: #aeb8d3;
+            line-height: 1.7;
+        }
+
+        .studio {
+            background: #11182e;
+            border: 1px solid #303957;
+            border-radius: 16px;
+            padding: 24px;
+        }
+
+        label {
+            display: block;
+            margin: 18px 0 9px;
+            font-weight: bold;
+        }
+
+        select, textarea {
+            width: 100%;
+            padding: 14px;
+            background: #080e20;
+            color: white;
+            border: 1px solid #394766;
+            border-radius: 9px;
+            font-size: 15px;
+        }
+
+        textarea {
+            min-height: 150px;
+            resize: vertical;
+        }
+
+        button {
+            width: 100%;
+            margin-top: 20px;
+            padding: 15px;
+            border: none;
+            border-radius: 9px;
+            background: #6677ff;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #8290ff;
+        }
+
+        .output-box {
+            margin-top: 25px;
+            padding: 18px;
+            background: #080e20;
+            border: 1px solid #394766;
+            border-radius: 10px;
+            min-height: 100px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            color: #cbd5ff;
+            line-height: 1.7;
+        }
+
+        footer {
+            text-align: center;
+            padding: 30px 15px;
+            color: #8290a9;
+            font-size: 13px;
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <div class="logo">✦ FORGOTTEN AI STUDIO</div>
+    <div class="version">VERSION 2.0</div>
+</header>
+
+<main>
+
+    <section class="hero">
+        <h1>Welcome to Forgotten AI Studio</h1>
+        <p>Your creative workspace for AI storytelling, documentaries, scripts and ideas.</p>
+    </section>
+
+    <section class="studio">
+
+        <h2>Creative AI Workspace</h2>
+
+        <label for="contentType">Select Your Creation</label>
+
+        <select id="contentType">
+            <option value="YouTube Documentary">YouTube Documentary</option>
+            <option value="Storytelling">Storytelling</option>
+            <option value="YouTube Script">YouTube Script</option>
+            <option value="Video Ideas">Video Ideas</option>
+            <option value="Historical Research">Historical Research</option>
+            <option value="Social Media Content">Social Media Content</option>
+        </select>
+
+        <label for="promptInput">Enter Your Creative Idea</label>
+
+        <textarea id="promptInput" placeholder="Describe your story, documentary or creative idea..."></textarea>
+
+        <button id="generateButton">Generate My Content ✨</button>
+
+        <h3 style="margin-top:25px;">Your Workspace Output</h3>
+
+        <div id="output" class="output-box">
+            Your generated content will appear here.
+        </div>
+
+    </section>
+
+</main>
+
+<footer>
+    © 2026 Forgotten AI Studio V2.0
+    <br><br>
+    Create • Imagine • Discover
+</footer>
+
+<script src="script.js"></script>
+
+</body>
+</html>
+
