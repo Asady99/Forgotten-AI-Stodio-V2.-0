@@ -1,0 +1,36 @@
+(function () {
+  var API = "https://forgotten-agents-api.bakhatfraz.workers.dev/";
+  var box = document.createElement("section");
+  box.style.cssText = "max-width:900px;margin:24px auto;padding:16px;font-family:system-ui,sans-serif;";
+  box.innerHTML = '<h2 style="margin:0 0 12px">AI Agents</h2><p id="agents-status">Loading agents...</p><div id="agents-grid" style="display:grid;gap:12px;"></div>';
+  document.body.appendChild(box);
+
+  fetch(API)
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var status = document.getElementById("agents-status");
+      var grid = document.getElementById("agents-grid");
+      if (!data.success) { status.textContent = "Could not load agents."; return; }
+      var active = data.agents.filter(function (a) { return a.status === "active"; }).length;
+      status.textContent = data.count + " agents, " + active + " active";
+      data.agents.forEach(function (a) {
+        var card = document.createElement("div");
+        card.style.cssText = "border:1px solid #ccc;border-radius:12px;padding:12px;background:#fff;color:#222;";
+        var title = document.createElement("strong");
+        title.textContent = a.id + ". " + a.name;
+        var badge = document.createElement("span");
+        badge.textContent = " " + a.status;
+        badge.style.cssText = "margin-left:8px;font-size:12px;color:#0a7a2f;";
+        var role = document.createElement("p");
+        role.textContent = a.role;
+        role.style.cssText = "margin:8px 0 0;font-size:14px;line-height:1.4;";
+        card.appendChild(title);
+        card.appendChild(badge);
+        card.appendChild(role);
+        grid.appendChild(card);
+      });
+    })
+    .catch(function () {
+      document.getElementById("agents-status").textContent = "Could not reach the server.";
+    });
+})();
