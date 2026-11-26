@@ -36,7 +36,7 @@ export default {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const allowedOrigin = env.STUDIO_ORIGIN || "";
-    const send = (body, status = 200) => send(body, status, origin, allowedOrigin);
+    const send = (body, status = 200) => json(body, status, origin, allowedOrigin);
     if (origin && (!allowedOrigin || origin !== allowedOrigin)) {
       return send({success:false,error:"Origin not allowed"},403);
     }
