@@ -13,7 +13,7 @@ function hasToken(request, env, name) {
 const stages = [
   "queued","researching","scripting","fact_checking","storyboarding",
   "creating_visuals","creating_voice","rendering","quality_review",
-  "awaiting_owner_approval"
+  "awaiting_owner_approval","failed"
 ];
 const publicStage = (s) => ({
   queued:"Queued", researching:"Preparing", scripting:"Preparing",
