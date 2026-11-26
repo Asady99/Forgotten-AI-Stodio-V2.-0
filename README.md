@@ -60,3 +60,19 @@ The current frontend is a working UI shell with AI generation and agent-list int
 ## Project status
 
 Development and verification in progress.
+
+## Secure script persistence — next implementation gate
+
+The existing D1 schema was inspected read-only. The `scripts` table already contains:
+
+- `project_id`, `topic_id`, `title`, and `content`
+- `language`, `status`, and `version`
+- `fact_check_report`, `verification_status`, and timestamps
+
+The existing Scripts API save endpoint inserts into this table and checks the server-side `SAVE_KEY` secret in the `X-Admin-Key` header.
+
+**Do not call this administrative endpoint directly from browser JavaScript.** A secret placed in frontend code is public to every visitor. A public proxy without user authentication would also permit unauthorized database writes.
+
+Before enabling server-side saving from the studio, add and verify an authentication boundary (for example, a Cloudflare Access-protected application with server-side JWT validation, using a supported protected hostname and an explicit allow policy). Only after that boundary is configured should a server-side endpoint accept authenticated save requests, validate and limit the payload, and write to D1. The browser must never receive `SAVE_KEY`.
+
+Until authentication is configured and tested end to end, script persistence remains intentionally disabled from the public frontend. No database rows or production Worker settings were changed during this inspection.
