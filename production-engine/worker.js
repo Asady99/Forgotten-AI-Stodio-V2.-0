@@ -81,10 +81,15 @@ export default {
         if (!title) return send({success:false,error:"A topic is required"},400);
         if (format !== "documentary" && format !== "short") return send({success:false,error:"Invalid production format"},400);
         const id = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO production_jobs (id,project_id,topic_id,title,format,language,status,current_stage,owner_approval_required) VALUES (?,?,?,?,?,?,'queued','queued',1)")
-          .bind(id,Number.isInteger(body.project_id)?body.project_id:null,Number.isInteger(body.topic_id)?body.topic_id:null,title,format,language).run();
-        await env.DB.prepare("INSERT INTO production_approvals (id,job_id,approval_type,decision) VALUES (?,?,'final_video','pending')")
-          .bind(crypto.randomUUID(),id).run();
+        const created = await env.DB.batch([
+          env.DB.prepare("INSERT INTO production_jobs (id,project_id,topic_id,title,format,language,status,current_stage,owner_approval_required) VALUES (?,?,?,?,?,?,'queued','queued',1)")
+            .bind(id,Number.isInteger(body.project_id)?body.project_id:null,Number.isInteger(body.topic_id)?body.topic_id:null,title,format,language),
+          env.DB.prepare("INSERT INTO production_approvals (id,job_id,approval_type,decision) VALUES (?,?,'final_video','pending')")
+            .bind(crypto.randomUUID(),id)
+        ]);
+        if (created.some(result => result.meta?.changes !== 1)) {
+          throw new Error("Atomic job creation did not complete");
+        }
         return send({success:true,job:{id,title,format,language,status:"queued",stage_label:publicStage("queued"),owner_approval_required:true}},201);
       }
       if (request.method === "GET" && url.pathname === "/jobs") {
@@ -138,7 +143,7 @@ export default {
       const match = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})$/i);
       if (request.method === "GET" && match) {
         const id = match[1];
-        const job = await env.DB.prepare("SELECT * FROM production_jobs WHERE id=?").bind(id).first();
+        const job = await env.DB.prepare("SELECT id,title,format,language,status,current_stage,owner_approval_required,created_at,updated_at FROM production_jobs WHERE id=?").bind(id).first();
         if (!job) return send({success:false,error:"Job not found"},404);
         const [assets,approvals] = await Promise.all([
           env.DB.prepare("SELECT id,asset_type,storage_provider,mime_type,size_bytes,created_at FROM production_assets WHERE job_id=? ORDER BY created_at").bind(id).all(),
