@@ -32,7 +32,7 @@ const publicStage = (s) => ({
   rejected:"Not approved", failed:"Failed"
 }[s] || "In progress");
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const allowedOrigin = env.STUDIO_ORIGIN || "";
@@ -68,8 +68,13 @@ export default {
     const isOrchestratorStage = request.method === "POST" && /^\/jobs\/[0-9a-f-]{36}\/stage$/i.test(url.pathname);
     const isOwnerAction = (request.method === "POST" && (url.pathname === "/jobs" || /^\/jobs\/[0-9a-f-]{36}\/approval$/i.test(url.pathname))) ||
       (request.method === "GET" && (url.pathname === "/jobs" || /^\/jobs\/[0-9a-f-]{36}$/i.test(url.pathname)));
+    // ctx.access exists only when Cloudflare Access authenticated this direct Worker request.
+    const accessIdentity = ctx?.access ? await ctx.access.getIdentity().catch(() => null) : null;
+    const configuredOwnerEmail = String(env.STUDIO_OWNER_EMAIL || "").trim().toLowerCase();
+    const ownerViaAccess = !!configuredOwnerEmail &&
+      String(accessIdentity?.email || "").trim().toLowerCase() === configuredOwnerEmail;
     if (isOrchestratorStage ? !hasToken(request,env,"STUDIO_ORCHESTRATOR_TOKEN") :
-        isOwnerAction ? !hasToken(request,env,"STUDIO_OWNER_TOKEN") : true) {
+        isOwnerAction ? !(ownerViaAccess || hasToken(request,env,"STUDIO_OWNER_TOKEN")) : true) {
       return send({success:false,error:"Unauthorized"},401);
     }
     try {
