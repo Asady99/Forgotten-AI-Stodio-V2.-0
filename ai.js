@@ -8,6 +8,7 @@
   if (!btn || !out || !typeEl || !inputEl) return;
 
   var busy = false;
+  var REQUEST_TIMEOUT_MS = 90000;
 
   btn.addEventListener("click", function () {
     var idea = inputEl.value.trim();
@@ -22,7 +23,7 @@
 
     busy = true;
     btn.disabled = true;
-    out.textContent = "Generating... this can take up to a minute.";
+    out.textContent = "Generating... please wait.";
 
     var prompt =
       "Create: " + typeEl.value +
@@ -35,10 +36,16 @@
       "- List the main sources a researcher should check.\n" +
       "- If unsure about a fact, say it is uncertain instead of guessing.";
 
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function () {
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
     fetch(AI_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: prompt })
+      body: JSON.stringify({ prompt: prompt }),
+      signal: controller.signal
     })
       .then(function (response) {
         if (!response.ok) {
@@ -47,16 +54,21 @@
         return response.json();
       })
       .then(function (data) {
-        if (data && data.success && typeof data.result === "string") {
+        if (data && data.success && typeof data.result === "string" && data.result.trim()) {
           out.textContent = data.result;
         } else {
-          out.textContent = "Error: " + ((data && data.error) || "The AI server returned an unexpected response.");
+          out.textContent = "Error: " + ((data && data.error) || "The AI server returned an empty or unexpected response.");
         }
       })
       .catch(function (error) {
-        out.textContent = "Could not generate content. " + (error && error.message ? error.message : "Please try again.");
+        if (error && error.name === "AbortError") {
+          out.textContent = "The request timed out after 90 seconds. Please try again.";
+        } else {
+          out.textContent = "Could not generate content. " + (error && error.message ? error.message : "Please try again.");
+        }
       })
       .then(function () {
+        clearTimeout(timeoutId);
         busy = false;
         btn.disabled = false;
       });
