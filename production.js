@@ -11,7 +11,7 @@
     status.textContent="Production engine not connected";
     return;
   }
-  fetch(API+"/health").then(function(r){
+  fetch(API+"/health",{credentials:"include"}).then(function(r){
     if(!r.ok) throw new Error("Health check failed");
     return r.json();
   }).then(function(data){
@@ -30,7 +30,7 @@
     if(!topic || button.disabled) return;
     button.disabled=true;
     button.textContent="Submitting…";
-    fetch(API+"/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+    fetch(API+"/jobs",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       title:topic,
       format:document.getElementById("format").value,
       language:document.getElementById("language").value
