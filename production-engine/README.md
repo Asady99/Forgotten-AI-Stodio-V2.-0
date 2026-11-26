@@ -51,3 +51,12 @@ D1 stores job state, agent runs, approvals and asset metadata. Binary images/aud
 
 ## First acceptance test
 A 60–90 second Short and a 3–5 minute image-led documentary must each complete research → sourced script → storyboard → visuals → narration → FFmpeg render → QC → owner approval. MP4 output must be downloadable and reproducible, without a paid-provider dependency.
+
+## Development API contract
+- `GET /health`: deliberately reports `status: scaffold` until all runtime dependencies and authentication are verified.
+- `POST /jobs`: creates a queued Documentary or Short job and a pending final-video approval record.
+- `GET /jobs` and `GET /jobs/:id`: return production status, asset metadata and approval state; internal agent logs are not exposed in the dashboard response.
+- `POST /jobs/:id/stage`: server-side orchestrator only; updates the internal pipeline stage. It cannot approve or reject a video.
+- `POST /jobs/:id/approval`: owner-only final-video decision. It is accepted only while the job is awaiting owner approval. Publishing remains a separate action and is not implemented.
+
+The current API uses a server-side bearer secret as a temporary development gate. It is not suitable for direct browser use: do not place this token in dashboard JavaScript. Before enabling the dashboard, implement and test a Cloudflare Access identity/JWT flow or a same-origin authenticated server-side proxy, restrict CORS, bind the existing D1 database, and verify owner identity. The current stage endpoint is a state-management interface, not an autonomous agent runner. No research, visual generation, TTS, FFmpeg rendering, or upload adapter is claimed operational until separately implemented and tested.
