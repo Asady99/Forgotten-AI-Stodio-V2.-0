@@ -74,7 +74,7 @@ export default {
     }
     try {
       if (request.method === "POST" && url.pathname === "/jobs") {
-        const body = await request.send();
+        const body = await request.json();
         const title = String(body.title || body.topic || "").trim().slice(0,200);
         const format = body.format;
         const language = ["en","ur","es"].includes(body.language) ? body.language : "en";
@@ -98,7 +98,7 @@ export default {
       }
       const approvalMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/approval$/i);
       if (request.method === "POST" && approvalMatch) {
-        const body = await request.send();
+        const body = await request.json();
         const decision = body.decision;
         if (!["approved","rejected"].includes(decision)) return send({success:false,error:"Decision must be approved or rejected"},400);
         const id = approvalMatch[1];
@@ -119,7 +119,7 @@ export default {
       }
       const stageMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/stage$/i);
       if (request.method === "POST" && stageMatch) {
-        const body = await request.send();
+        const body = await request.json();
         const stage = String(body.stage || "");
         if (!stages.includes(stage)) return send({success:false,error:"Unknown or owner-only production stage"},400);
         const id = stageMatch[1];
