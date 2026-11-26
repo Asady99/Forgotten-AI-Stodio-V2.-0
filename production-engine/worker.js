@@ -114,8 +114,8 @@ export default {
         if (!approval) return send({success:false,error:"Pending final-video approval not found"},409);
         const notes = String(body.notes || "").trim().slice(0,1000);
         const results = await env.DB.batch([
-          env.DB.prepare("UPDATE production_approvals SET decision=?,notes=?,decided_at=CURRENT_TIMESTAMP WHERE id=? AND decision='pending'").bind(decision,notes,approval.id),
-          env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='awaiting_owner_approval'").bind(decision,decision,id)
+          env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='awaiting_owner_approval' AND EXISTS (SELECT 1 FROM production_approvals WHERE id=? AND job_id=? AND approval_type='final_video' AND decision='pending')").bind(decision,decision,id,approval.id,id),
+          env.DB.prepare("UPDATE production_approvals SET decision=?,notes=?,decided_at=CURRENT_TIMESTAMP WHERE id=? AND job_id=? AND decision='pending' AND EXISTS (SELECT 1 FROM production_jobs WHERE id=? AND status=?)").bind(decision,notes,approval.id,id,id,decision)
         ]);
         if (results.some(result => result.meta?.changes !== 1)) {
           return send({success:false,error:"Approval state changed concurrently; refresh and try again"},409);
