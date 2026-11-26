@@ -1,20 +1,20 @@
 /**
  * Forgotten AI Studio Production Engine API.
- * Development-only scaffold. Do not deploy until auth, CORS, D1 migration,
+ * Development-only scaffold. Do not deploy until identity, CORS, D1,
  * storage and compute adapters have been configured and tested.
  */
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
 });
-function authorized(request, env) {
-  const expected = env.STUDIO_API_TOKEN;
+function hasToken(request, env, name) {
+  const expected = env[name];
   return !!expected && (request.headers.get("Authorization") || "") === ("Bearer " + expected);
 }
-const stages = new Set([
+const stages = [
   "queued","researching","scripting","fact_checking","storyboarding",
   "creating_visuals","creating_voice","rendering","quality_review",
-  "awaiting_owner_approval","approved","rejected","failed"
-]);
+  "awaiting_owner_approval"
+];
 const publicStage = (s) => ({
   queued:"Queued", researching:"Preparing", scripting:"Preparing",
   fact_checking:"Preparing", storyboarding:"Preparing",
@@ -26,6 +26,7 @@ const publicStage = (s) => ({
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method === "OPTIONS") return new Response(null, {status:204,headers:{"Allow":"GET,POST,OPTIONS","Cache-Control":"no-store"}});
     if (request.method === "GET" && url.pathname === "/health") {
       return json({
         service:"Forgotten AI Studio Production Engine",
@@ -37,7 +38,13 @@ export default {
         paid_fallbacks:false
       });
     }
-    if (!authorized(request, env)) return json({success:false,error:"Unauthorized"},401);
+    const isOrchestratorStage = request.method === "POST" && /^\/jobs\/[0-9a-f-]{36}\/stage$/i.test(url.pathname);
+    const isOwnerAction = (request.method === "POST" && (url.pathname === "/jobs" || /^\/jobs\/[0-9a-f-]{36}\/approval$/i.test(url.pathname))) ||
+      (request.method === "GET" && (url.pathname === "/jobs" || /^\/jobs\/[0-9a-f-]{36}$/i.test(url.pathname)));
+    if (isOrchestratorStage ? !hasToken(request,env,"STUDIO_ORCHESTRATOR_TOKEN") :
+        isOwnerAction ? !hasToken(request,env,"STUDIO_OWNER_TOKEN") : true) {
+      return json({success:false,error:"Unauthorized"},401);
+    }
     try {
       if (request.method === "POST" && url.pathname === "/jobs") {
         const body = await request.json();
@@ -70,8 +77,8 @@ export default {
         if (!approval) return json({success:false,error:"Pending final-video approval not found"},409);
         const notes = String(body.notes || "").trim().slice(0,1000);
         await env.DB.batch([
-          env.DB.prepare("UPDATE production_approvals SET decision=?,notes=?,decided_at=CURRENT_TIMESTAMP WHERE id=?").bind(decision,notes,approval.id),
-          env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(decision,decision,id)
+          env.DB.prepare("UPDATE production_approvals SET decision=?,notes=?,decided_at=CURRENT_TIMESTAMP WHERE id=? AND decision='pending'").bind(decision,notes,approval.id),
+          env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='awaiting_owner_approval'").bind(decision,decision,id)
         ]);
         return json({success:true,job_id:id,decision,publishing:"not_authorized"});
       }
@@ -79,14 +86,21 @@ export default {
       if (request.method === "POST" && stageMatch) {
         const body = await request.json();
         const stage = String(body.stage || "");
-        if (!stages.has(stage) || ["approved","rejected"].includes(stage)) return json({success:false,error:"Unknown or owner-only production stage"},400);
+        if (!stages.includes(stage)) return json({success:false,error:"Unknown or owner-only production stage"},400);
         const id = stageMatch[1];
-        const job = await env.DB.prepare("SELECT id,status FROM production_jobs WHERE id=?").bind(id).first();
+        const job = await env.DB.prepare("SELECT id,status,current_stage FROM production_jobs WHERE id=?").bind(id).first();
         if (!job) return json({success:false,error:"Job not found"},404);
-        if (["approved","rejected"].includes(job.status)) return json({success:false,error:"Final decision is locked"},409);
-        const errorMessage = stage === "failed" ? String(body.error || "Production stage failed").slice(0,1000) : null;
-        await env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
-          .bind(stage,stage,errorMessage,id).run();
+        if (["approved","rejected","failed"].includes(job.status)) return json({success:false,error:"Final or failed job state is locked"},409);
+        if (stage === "failed") {
+          const errorMessage = String(body.error || "Production stage failed").slice(0,1000);
+          await env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status NOT IN ('approved','rejected','failed')").bind(errorMessage,id).run();
+          return json({success:true,job_id:id,status:"failed",stage_label:publicStage("failed")});
+        }
+        const currentIndex = stages.indexOf(job.current_stage);
+        const nextIndex = stages.indexOf(stage);
+        if (nextIndex !== currentIndex + 1) return json({success:false,error:"Invalid stage transition",current_stage:job.current_stage,required_next_stage:stages[currentIndex+1] || null},409);
+        await env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND current_stage=?")
+          .bind(stage,stage,id,job.current_stage).run();
         return json({success:true,job_id:id,status:stage,stage_label:publicStage(stage)});
       }
       const match = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})$/i);
