@@ -79,7 +79,7 @@ export default {
       if (request.method === "POST" && stageMatch) {
         const body = await request.json();
         const stage = String(body.stage || "");
-        if (!stages.has(stage)) return json({success:false,error:"Unknown production stage"},400);
+        if (!stages.has(stage) || ["approved","rejected"].includes(stage)) return json({success:false,error:"Unknown or owner-only production stage"},400);
         const id = stageMatch[1];
         const job = await env.DB.prepare("SELECT id,status FROM production_jobs WHERE id=?").bind(id).first();
         if (!job) return json({success:false,error:"Job not found"},404);
