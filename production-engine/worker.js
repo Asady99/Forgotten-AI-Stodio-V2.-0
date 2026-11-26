@@ -76,10 +76,13 @@ export default {
         const approval = await env.DB.prepare("SELECT id FROM production_approvals WHERE job_id=? AND approval_type='final_video' AND decision='pending' ORDER BY created_at DESC LIMIT 1").bind(id).first();
         if (!approval) return json({success:false,error:"Pending final-video approval not found"},409);
         const notes = String(body.notes || "").trim().slice(0,1000);
-        await env.DB.batch([
+        const results = await env.DB.batch([
           env.DB.prepare("UPDATE production_approvals SET decision=?,notes=?,decided_at=CURRENT_TIMESTAMP WHERE id=? AND decision='pending'").bind(decision,notes,approval.id),
           env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='awaiting_owner_approval'").bind(decision,decision,id)
         ]);
+        if (results.some(result => result.meta?.changes !== 1)) {
+          return json({success:false,error:"Approval state changed concurrently; refresh and try again"},409);
+        }
         return json({success:true,job_id:id,decision,publishing:"not_authorized"});
       }
       const stageMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/stage$/i);
@@ -93,14 +96,16 @@ export default {
         if (["approved","rejected","failed"].includes(job.status)) return json({success:false,error:"Final or failed job state is locked"},409);
         if (stage === "failed") {
           const errorMessage = String(body.error || "Production stage failed").slice(0,1000);
-          await env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status NOT IN ('approved','rejected','failed')").bind(errorMessage,id).run();
+          const result = await env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status NOT IN ('approved','rejected','failed')").bind(errorMessage,id).run();
+          if (result.meta?.changes !== 1) return json({success:false,error:"Job state changed concurrently; refresh and retry"},409);
           return json({success:true,job_id:id,status:"failed",stage_label:publicStage("failed")});
         }
         const currentIndex = stages.indexOf(job.current_stage);
         const nextIndex = stages.indexOf(stage);
         if (nextIndex !== currentIndex + 1) return json({success:false,error:"Invalid stage transition",current_stage:job.current_stage,required_next_stage:stages[currentIndex+1] || null},409);
-        await env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND current_stage=?")
-          .bind(stage,stage,id,job.current_stage).run();
+        const result = await env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND current_stage=? AND status=?")
+          .bind(stage,stage,id,job.current_stage,job.status).run();
+        if (result.meta?.changes !== 1) return json({success:false,error:"Job state changed concurrently; refresh and retry"},409);
         return json({success:true,job_id:id,status:stage,stage_label:publicStage(stage)});
       }
       const match = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})$/i);
