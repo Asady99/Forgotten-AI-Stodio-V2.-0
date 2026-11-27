@@ -5,7 +5,7 @@ class DurableQueueMigrationTests(unittest.TestCase):
  def setUp(self):
   self.db=sqlite3.connect(":memory:");self.db.execute("PRAGMA foreign_keys=ON")
   self.db.executescript("CREATE TABLE projects(id INTEGER PRIMARY KEY,name TEXT);CREATE TABLE topics(id INTEGER PRIMARY KEY,title_en TEXT);INSERT INTO projects VALUES(1,'Studio');INSERT INTO topics VALUES(1,'Topic');")
-  self.db.executescript((ROOT/"001_production_jobs.sql").read_text());self.db.executescript((ROOT/"002_durable_queue.sql").read_text())
+  self.db.executescript((ROOT/"001_production_jobs.sql").read_text());self.db.executescript((ROOT/"002_durable_queue.sql").read_text());self.db.executescript((ROOT/"003_queue_failure_count.sql").read_text())
  def tearDown(self):self.db.close()
  def test_new_job_is_automatically_queued(self):
   self.db.execute("INSERT INTO production_jobs(id,title,format) VALUES('j1','Test','short')")
@@ -19,6 +19,12 @@ class DurableQueueMigrationTests(unittest.TestCase):
   self.db.execute("UPDATE production_jobs SET status='failed',current_stage='failed' WHERE id='j1'")
   self.db.execute("UPDATE production_jobs SET status='queued',current_stage='queued',attempt_count=2 WHERE id='j1'")
   self.assertEqual(self.db.execute("SELECT status,delivery_count,lease_owner,lease_token,lease_expires_at FROM production_queue").fetchone(),('pending',0,None,None,None))
+ def test_failure_count_starts_at_zero_and_retry_resets_it(self):
+  self.db.execute("INSERT INTO production_jobs(id,title,format) VALUES('j1','Test','short')")
+  self.db.execute("UPDATE production_queue SET failure_count=2,delivery_count=4 WHERE job_id='j1'")
+  self.db.execute("UPDATE production_jobs SET status='failed',current_stage='failed' WHERE id='j1'")
+  self.db.execute("UPDATE production_jobs SET status='queued',current_stage='queued',attempt_count=2 WHERE id='j1'")
+  self.assertEqual(self.db.execute("SELECT failure_count,delivery_count FROM production_queue WHERE job_id='j1'").fetchone(),(0,0))
  def test_expired_lease_is_reclaimable(self):
   self.db.execute("INSERT INTO production_jobs(id,title,format) VALUES('j1','Test','short')")
   self.db.execute("UPDATE production_queue SET status='leased',lease_owner='dead',lease_token='old',lease_expires_at=datetime('now','-1 minute') WHERE job_id='j1'")
