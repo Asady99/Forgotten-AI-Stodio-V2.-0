@@ -28,6 +28,8 @@ class FakeDB {
     this.jobs = new Map();
     this.approvals = new Map();
     this.assets = new Map();
+    this.projects = new Set([1]);
+    this.topics = new Set(Array.from({length:96},(_,i)=>i+1));
   }
   prepare(sql) {
     const db = this;
@@ -36,6 +38,8 @@ class FakeDB {
       sql,
       bind(...values) { args = values; return statement; },
       async first() {
+        if (sql.includes("FROM projects WHERE id=?")) return db.projects.has(args[0]) ? {id:args[0]} : null;
+        if (sql.includes("FROM topics WHERE id=?")) return db.topics.has(args[0]) ? {id:args[0]} : null;
         if (sql.includes("FROM production_jobs WHERE id=?")) return db.jobs.get(args[0]) || null;
         if (sql.includes("FROM production_approvals WHERE job_id=?")) {
           return [...db.approvals.values()].find(a => a.job_id === args[0] && a.approval_type === "final_video" && a.decision === "pending") || null;
@@ -142,6 +146,32 @@ test("job creation creates queued job and pending final approval record", async 
   assert.equal(db.jobs.get(id).status,"queued");
   assert.equal(db.jobs.get(id).current_stage,"queued");
   assert.equal([...db.approvals.values()].filter(a=>a.job_id===id && a.decision==="pending").length,1);
+});
+
+test("job creation accepts existing project and topic references", async () => {
+  const db=makeDB();
+  const result=await call("/jobs","POST",OWNER,{title:"Linked topic",format:"documentary",project_id:1,topic_id:96},db);
+  assert.equal(result.response.status,201);
+  const job=db.jobs.get(result.body.job.id);
+  assert.equal(job.project_id,1);
+  assert.equal(job.topic_id,96);
+});
+
+test("job creation rejects invalid or missing project and topic references", async () => {
+  const db=makeDB();
+  const cases=[
+    [{project_id:999},404,"Project not found"],
+    [{topic_id:999},404,"Topic not found"],
+    [{project_id:0},400,"Invalid project_id"],
+    [{topic_id:-1},400,"Invalid topic_id"],
+    [{project_id:"1"},400,"Invalid project_id"]
+  ];
+  for (const [extra,status,error] of cases) {
+    const result=await call("/jobs","POST",OWNER,{title:"Linked topic",format:"documentary",...extra},db);
+    assert.equal(result.response.status,status);
+    assert.equal(result.body.error,error);
+  }
+  assert.equal(db.jobs.size,0);
 });
 
 test("stage progression rejects skipping and then accepts the next stage", async () => {
