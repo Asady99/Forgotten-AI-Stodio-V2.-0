@@ -64,6 +64,14 @@
     </section>
   </div>
   <section class="panel" style="margin-top:18px">
+    <h2>Agent Execution Monitor</h2>
+    <p class="hint">Enter a production job ID to view its recorded agent runs. This monitor shows execution records only; it does not start agents.</p>
+    <label for="monitor-job-id">Production Job ID</label>
+    <input id="monitor-job-id" name="monitor-job-id" maxlength="36" placeholder="Paste the job ID">
+    <button id="monitor-button" type="button" disabled>Load Agent Logs</button>
+    <pre id="agent-run-output" class="empty" aria-live="polite">No agent logs loaded.</pre>
+  </section>
+  <section class="panel" style="margin-top:18px">
     <h2>Your Finished Videos</h2>
     <div class="empty" id="videos-empty">Your completed videos will appear here when the production engine is connected.</div>
   </section>
