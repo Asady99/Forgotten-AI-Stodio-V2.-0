@@ -1,11 +1,12 @@
 import sqlite3,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]/"production-engine"
+MIGRATIONS=("001_production_jobs.sql","002_durable_queue.sql","003_queue_failure_count.sql","004_staging_reference_compatibility.sql")
 class DurableQueueMigrationTests(unittest.TestCase):
  def setUp(self):
   self.db=sqlite3.connect(":memory:");self.db.execute("PRAGMA foreign_keys=ON")
   self.db.executescript("CREATE TABLE projects(id INTEGER PRIMARY KEY,name TEXT);CREATE TABLE topics(id INTEGER PRIMARY KEY,title_en TEXT);INSERT INTO projects VALUES(1,'Studio');INSERT INTO topics VALUES(1,'Topic');")
-  self.db.executescript((ROOT/"001_production_jobs.sql").read_text());self.db.executescript((ROOT/"002_durable_queue.sql").read_text());self.db.executescript((ROOT/"003_queue_failure_count.sql").read_text())
+  for migration in MIGRATIONS:self.db.executescript((ROOT/migration).read_text())
  def tearDown(self):self.db.close()
  def test_new_job_is_automatically_queued(self):
   self.db.execute("INSERT INTO production_jobs(id,title,format) VALUES('j1','Test','short')")
@@ -37,4 +38,12 @@ class DurableQueueMigrationTests(unittest.TestCase):
   self.assertEqual(self.db.execute("SELECT output_text FROM production_agent_outputs").fetchone()[0],"brief")
   self.db.execute("DELETE FROM production_jobs WHERE id='j1'")
   self.assertEqual(self.db.execute("SELECT COUNT(*) FROM production_agent_outputs").fetchone()[0],0)
+ def test_standalone_staging_without_host_tables_can_enqueue_job(self):
+  isolated=sqlite3.connect(":memory:");isolated.execute("PRAGMA foreign_keys=ON")
+  try:
+   for migration in MIGRATIONS:isolated.executescript((ROOT/migration).read_text())
+   isolated.execute("INSERT INTO production_jobs(id,title,format) VALUES('stage-1','Staging smoke','short')")
+   self.assertEqual(isolated.execute("SELECT job_id,status FROM production_queue").fetchone(),("stage-1","pending"))
+   self.assertEqual(isolated.execute("PRAGMA foreign_key_check").fetchall(),[])
+  finally:isolated.close()
 if __name__=="__main__":unittest.main()
