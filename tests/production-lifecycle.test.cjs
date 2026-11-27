@@ -126,7 +126,8 @@ class FakeDB {
       const [attemptStageNew,finalStage,finalStage2,attemptJobId,attemptNo,attemptOldStage]=statements[1].__args;
       const job=this.jobs.get(id);
       const attempt=[...this.attempts.values()].find(a=>a.job_id===attemptJobId && a.attempt_number===attemptNo);
-      if (!job || !attempt || job.current_stage!==oldStage || job.status!==oldStatus || job.attempt_count!==attemptNumber || attempt.status!=="running" || attempt.stage!==attemptStage || attemptOldStage!==oldStage) return [{meta:{changes:0}},{meta:{changes:0}}];
+      const activeRuns=[...this.agentRuns.values()].some(run=>run.job_id===id && run.attempt_number===attemptNumber && run.stage===oldStage && run.status==="running");
+      if (!job || !attempt || activeRuns || job.current_stage!==oldStage || job.status!==oldStatus || job.attempt_count!==attemptNumber || attempt.status!=="running" || attempt.stage!==attemptStage || attemptOldStage!==oldStage) return [{meta:{changes:0}},{meta:{changes:0}}];
       Object.assign(job,{status,current_stage:stage,error_message:null});
       Object.assign(attempt,{stage:attemptStageNew,status:finalStage==="awaiting_owner_approval" ? "succeeded":"running"});
       return [{meta:{changes:1}},{meta:{changes:1}}];
@@ -411,6 +412,19 @@ test("agent execution validates stage and opaque references and rejects duplicat
   const runId=started.body.agent_run.id;
   assert.equal((await call("/jobs/"+id+"/agent-runs/"+runId,"POST",ORCHESTRATOR,{status:"succeeded"},db)).response.status,200);
   assert.equal((await call("/jobs/"+id+"/agent-runs/"+runId,"POST",ORCHESTRATOR,{status:"failed"},db)).response.status,409);
+});
+
+test("stage progression waits for all current-stage agent runs to close", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const started=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued"},db);
+  const blocked=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db);
+  assert.equal(blocked.response.status,409);
+  assert.equal(db.jobs.get(id).current_stage,"queued");
+  const closed=await call("/jobs/"+id+"/agent-runs/"+started.body.agent_run.id,"POST",ORCHESTRATOR,{status:"succeeded"},db);
+  assert.equal(closed.response.status,200);
+  const advanced=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db);
+  assert.equal(advanced.response.status,200);
+  assert.equal(db.jobs.get(id).current_stage,"researching");
 });
 
 test("multiple agents can execute concurrently within the same job stage", async () => {
