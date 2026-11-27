@@ -2,7 +2,8 @@
 -- Additive migration only. Not applied to Cloudflare D1 by this commit.
 -- Existing tables and records are intentionally untouched.
 CREATE TABLE IF NOT EXISTS production_jobs (
- id TEXT PRIMARY KEY, project_id INTEGER, topic_id INTEGER, title TEXT NOT NULL,
+ id TEXT PRIMARY KEY, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+ topic_id INTEGER REFERENCES topics(id) ON DELETE SET NULL, title TEXT NOT NULL,
  format TEXT NOT NULL CHECK(format IN ('documentary','short')),
  language TEXT NOT NULL DEFAULT 'en',
  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','researching','scripting','fact_checking','storyboarding','creating_visuals','creating_voice','rendering','quality_review','awaiting_owner_approval','approved','rejected','failed')),
