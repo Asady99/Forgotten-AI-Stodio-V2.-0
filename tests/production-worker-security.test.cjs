@@ -81,7 +81,7 @@ test("agent execution endpoints require orchestrator credentials", async () => {
   const missing=await invoke(request(path,"POST",{"Authorization":"Bearer orchestrator-secret","Content-Type":"application/json"}),{
     STUDIO_ORCHESTRATOR_TOKEN:"orchestrator-secret"
   });
-  assert.equal(missing.status,500); // Orchestrator authentication passed; protected DB access failed closed.
+  assert.equal(missing.status,400); // Orchestrator authentication passed; malformed body is rejected before DB access.
 });
 
 test("agent run monitoring is owner-only", async () => {
