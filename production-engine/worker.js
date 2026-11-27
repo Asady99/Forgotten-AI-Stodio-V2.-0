@@ -164,7 +164,7 @@ export default {
         return send({success:true,job_id:id,status:"queued",attempt_count:job.attempt_count+1,max_attempts:job.max_attempts,attempts_remaining:job.max_attempts-job.attempt_count-1});
       }
       const stageMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/stage$/i);
-      if (request.method === "POST" && stageMatch) {}
+      if (request.method === "POST" && stageMatch) {
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== "object" || Array.isArray(body)) return send({success:false,error:"Invalid JSON body"},400);
         const stage = String(body.stage || "");
