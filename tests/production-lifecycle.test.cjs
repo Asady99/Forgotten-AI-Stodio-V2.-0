@@ -415,6 +415,8 @@ test("agent execution validates stage and opaque references and rejects duplicat
   assert.equal(wrongStage.response.status,400);
   const rawInput=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued",input_ref:"https://example.com/?token=secret"},db);
   assert.equal(rawInput.response.status,400);
+  const urlAsReference=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued",input_ref:"external:https://example.com/private"},db);
+  assert.equal(urlAsReference.response.status,400);
   const started=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued"},db);
   const runId=started.body.agent_run.id;
   assert.equal((await call("/jobs/"+id+"/agent-runs/"+runId,"POST",ORCHESTRATOR,{status:"succeeded"},db)).response.status,200);
