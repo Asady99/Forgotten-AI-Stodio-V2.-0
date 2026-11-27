@@ -29,6 +29,7 @@ class FakeDB {
     this.approvals = new Map();
     this.assets = new Map();
     this.attempts = new Map();
+    this.agentRuns = new Map();
     this.projects = new Set([1]);
     this.topics = new Set(Array.from({length:96},(_,i)=>i+1));
   }
@@ -55,9 +56,25 @@ class FakeDB {
         if (sql.includes("FROM production_assets")) return {results:[...(db.assets.get(args[0]) || [])]};
         if (sql.includes("FROM production_approvals")) return {results:[...db.approvals.values()].filter(a=>a.job_id===args[0])};
         if (sql.includes("FROM production_job_attempts")) return {results:[...db.attempts.values()].filter(a=>a.job_id===args[0]).sort((a,b)=>a.attempt_number-b.attempt_number)};
+        if (sql.includes("FROM production_agent_runs")) return {results:[...db.agentRuns.values()].filter(a=>a.job_id===args[0])};
         return {results:[]};
       },
       async run() {
+        if (sql.startsWith("INSERT INTO production_agent_runs")) {
+          const [id,agent_id,agent_name,stage,input_ref,jobId,expectedStage,attemptNumber,attemptJobId,attemptNo]=args;
+          const job=db.jobs.get(jobId);
+          const activeAttempt=[...db.attempts.values()].find(a=>a.job_id===attemptJobId && a.attempt_number===attemptNo && a.status==="running");
+          if (!job || !activeAttempt || ["failed","approved","rejected","awaiting_owner_approval"].includes(job.status) || job.current_stage!==expectedStage || job.attempt_count!==attemptNumber || stage!==expectedStage) return {meta:{changes:0}};
+          db.agentRuns.set(id,{id,job_id:jobId,attempt_number:attemptNumber,agent_id,agent_name,stage,status:"running",input_ref,output_ref:null,error_message:null,started_at:"2026-11-27T00:00:00Z",finished_at:null,duration_ms:null});
+          return {meta:{changes:1}};
+        }
+        if (sql.startsWith("UPDATE production_agent_runs SET status=?")) {
+          const [status,output_ref,error_message,id,jobId,jobForAttempt]=args;
+          const run=db.agentRuns.get(id), job=db.jobs.get(jobId);
+          if (!run || !job || run.job_id!==jobId || run.status!=="running" || run.attempt_number!==job.attempt_count || job.id!==jobForAttempt) return {meta:{changes:0}};
+          Object.assign(run,{status,output_ref,error_message,finished_at:"2026-11-27T00:00:01Z",duration_ms:1000});
+          return {meta:{changes:1}};
+        }
         if (sql.startsWith("UPDATE production_jobs SET status='failed'")) {
           const j=db.jobs.get(args[1]); if (!j || ["approved","rejected","failed"].includes(j.status)) return {meta:{changes:0}};
           Object.assign(j,{status:"failed",current_stage:"failed",error_message:args[0]}); return {meta:{changes:1}};
@@ -355,6 +372,57 @@ test("malformed or non-object JSON bodies return 400 without a server error", as
   assert.equal(db.jobs.size,0);
 });
 
+
+test("agent execution runs record successful completion and are visible to the owner", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const started=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",agent_id:2,stage:"queued",input_ref:"research:topic-96"},db);
+  assert.equal(started.response.status,201);
+  const runId=started.body.agent_run.id;
+  assert.equal(db.agentRuns.get(runId).attempt_number,1);
+  const finished=await call("/jobs/"+id+"/agent-runs/"+runId,"POST",ORCHESTRATOR,{status:"succeeded",output_ref:"research:source-pack-1"},db);
+  assert.equal(finished.response.status,200);
+  assert.equal(db.agentRuns.get(runId).status,"succeeded");
+  assert.equal(db.agentRuns.get(runId).duration_ms,1000);
+  const visible=await call("/jobs/"+id+"/agent-runs","GET",OWNER,undefined,db);
+  assert.equal(visible.response.status,200);
+  assert.equal(visible.body.count,1);
+  assert.equal(visible.body.agent_runs[0].output_ref,"research:source-pack-1");
+});
+
+test("agent execution failure is recorded with redacted diagnostics and can be skipped", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const failedStart=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Fact Check Agent",stage:"queued"},db);
+  const failed=await call("/jobs/"+id+"/agent-runs/"+failedStart.body.agent_run.id,"POST",ORCHESTRATOR,{status:"failed",error:"Bearer abc123 token=secret-value"},db);
+  assert.equal(failed.response.status,200);
+  assert.equal(db.agentRuns.get(failedStart.body.agent_run.id).error_message,"Bearer [REDACTED] token=[REDACTED]");
+  const skippedStart=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Optional Visual Agent",stage:"queued"},db);
+  const skipped=await call("/jobs/"+id+"/agent-runs/"+skippedStart.body.agent_run.id,"POST",ORCHESTRATOR,{status:"skipped"},db);
+  assert.equal(skipped.response.status,200);
+  assert.equal(db.agentRuns.get(skippedStart.body.agent_run.id).status,"skipped");
+});
+
+test("agent execution validates stage and opaque references and rejects duplicate closure", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const wrongStage=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"scripting"},db);
+  assert.equal(wrongStage.response.status,400);
+  const rawInput=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued",input_ref:"https://example.com/?token=secret"},db);
+  assert.equal(rawInput.response.status,400);
+  const started=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued"},db);
+  const runId=started.body.agent_run.id;
+  assert.equal((await call("/jobs/"+id+"/agent-runs/"+runId,"POST",ORCHESTRATOR,{status:"succeeded"},db)).response.status,200);
+  assert.equal((await call("/jobs/"+id+"/agent-runs/"+runId,"POST",ORCHESTRATOR,{status:"failed"},db)).response.status,409);
+});
+
+test("multiple agents can execute concurrently within the same job stage", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const results=await Promise.all([
+    call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued"},db),
+    call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Topic Agent",stage:"queued"},db)
+  ]);
+  assert.deepEqual(results.map(x=>x.response.status),[201,201]);
+  assert.equal(db.agentRuns.size,2);
+  assert.ok([...db.agentRuns.values()].every(run=>run.attempt_number===1 && run.status==="running"));
+});
 
 test("simultaneous stage updates from the same stage allow only one transition", async () => {
   const db=makeDB(), id=await createJob(db);
