@@ -201,3 +201,22 @@ test("simultaneous owner approval requests allow only one state change", async (
   assert.equal(finalJob,finalApproval);
   assert.ok(["approved","rejected"].includes(finalJob));
 });
+
+
+test("malformed or non-object JSON bodies return 400 without a server error", async () => {
+  const db=makeDB();
+  const cases=[
+    ["/jobs","POST",OWNER,"{"],
+    ["/jobs","POST",OWNER,"null"],
+    ["/jobs/"+JOB_ID+"/stage","POST",ORCHESTRATOR,"{"],
+    ["/jobs/"+JOB_ID+"/approval","POST",OWNER,"{"]
+  ];
+  for (const [pathname,method,token,raw] of cases) {
+    const response=await worker.fetch(new Request("https://engine.test"+pathname,{
+      method,headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:raw
+    }),{DB:db,STUDIO_OWNER_TOKEN:OWNER,STUDIO_ORCHESTRATOR_TOKEN:ORCHESTRATOR},{});
+    assert.equal(response.status,400);
+    assert.deepEqual(await response.json(),{success:false,error:"Invalid JSON body"});
+  }
+  assert.equal(db.jobs.size,0);
+});
