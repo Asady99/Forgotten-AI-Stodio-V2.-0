@@ -11,7 +11,7 @@ test("final stage stops at owner approval and cannot publish",()=>{assert.match(
 
 test("retry budget counts failed executions, not successful queue stage deliveries",()=>{
  assert.ok(runner.includes("failure_count,max_deliveries"));
- assert.ok(runner.includes("item.failure_count+1>=item.max_deliveries"));
+ assert.ok(runner.includes("(item.failure_count+1)>=item.max_deliveries"));
  assert.ok(runner.includes("failure_count=failure_count+1"));
  assert.ok(runner.includes("item.failure_count)))"));
 });
