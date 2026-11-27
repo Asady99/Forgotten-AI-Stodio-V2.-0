@@ -41,9 +41,9 @@ class ProductionMigrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row, ("queued", "queued", 1, "en"))
         retry_defaults = self.db.execute(
-            "SELECT attempt_count,max_attempts,last_failed_stage FROM production_jobs WHERE id='j1'"
+            "SELECT attempt_count,max_attempts,last_failed_stage,next_retry_at FROM production_jobs WHERE id='j1'"
         ).fetchone()
-        self.assertEqual(retry_defaults, (1, 3, None))
+        self.assertEqual(retry_defaults, (1, 3, None, None))
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(
                 "INSERT INTO production_jobs (id,title,format) VALUES ('j2','Bad','movie')")
