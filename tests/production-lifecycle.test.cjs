@@ -41,7 +41,10 @@ class FakeDB {
       async first() {
         if (sql.includes("FROM projects WHERE id=?")) return db.projects.has(args[0]) ? {id:args[0]} : null;
         if (sql.includes("FROM topics WHERE id=?")) return db.topics.has(args[0]) ? {id:args[0]} : null;
-        if (sql.includes("FROM production_jobs WHERE id=?")) return db.jobs.get(args[0]) || null;
+        if (sql.includes("FROM production_jobs WHERE id=?")) {
+          const job=db.jobs.get(args[0]);
+          return job ? {...job} : null;
+        }
         if (sql.includes("FROM production_approvals WHERE job_id=?")) {
           return [...db.approvals.values()].find(a => a.job_id === args[0] && a.approval_type === "final_video" && a.decision === "pending") || null;
         }
@@ -101,7 +104,7 @@ class FakeDB {
       Object.assign(attempt,{status:"failed",error_message:attemptError});
       return [{meta:{changes:1}},{meta:{changes:1}}];
     }
-    if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status=?,current_stage=?")) {
+    if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status=?,current_stage=?") && firstSql.includes("production_job_attempts")) {
       const [status,stage,id,oldStage,oldStatus,jobId,attemptNumber,attemptStage]=statements[0].__args;
       const [attemptStageNew,finalStage,finalStage2,attemptJobId,attemptNo,attemptOldStage]=statements[1].__args;
       const job=this.jobs.get(id);
