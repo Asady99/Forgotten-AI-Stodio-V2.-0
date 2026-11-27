@@ -120,7 +120,7 @@ class FakeDB {
       Object.assign(job,{status:"failed",current_stage:"failed",last_failed_stage:stage,next_retry_at:new Date(Date.now()+delaySeconds*1000).toISOString(),error_message:error});
       Object.assign(attempt,{status:"failed",error_message:attemptError});
       let closedRuns=0;
-      for (const run of db.agentRuns.values()) {
+      for (const run of this.agentRuns.values()) {
         if (run.job_id===id && run.attempt_number===attemptNumber && run.stage===stage && run.status==="running") {
           Object.assign(run,{status:"failed",error_message:error,finished_at:"2026-11-27T00:00:01Z",duration_ms:1000});
           closedRuns++;
