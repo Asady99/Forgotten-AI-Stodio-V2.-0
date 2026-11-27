@@ -117,7 +117,7 @@ export default {
         return send({success:true,job:{id,title,format,language,status:"queued",stage_label:publicStage("queued"),owner_approval_required:true}},201);
       }
       if (request.method === "GET" && url.pathname === "/jobs") {
-        const result = await env.DB.prepare("SELECT id,title,format,language,status,current_stage,owner_approval_required,attempt_count,max_attempts,last_failed_stage,created_at,updated_at FROM production_jobs ORDER BY created_at DESC LIMIT 50").all();
+        const result = await env.DB.prepare("SELECT id,title,format,language,status,current_stage,owner_approval_required,attempt_count,max_attempts,last_failed_stage,next_retry_at,created_at,updated_at FROM production_jobs ORDER BY created_at DESC LIMIT 50").all();
         return send({success:true,count:result.results.length,jobs:result.results.map(j=>({...j,stage_label:publicStage(j.current_stage)}))});
       }
       const approvalMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/approval$/i);
@@ -145,17 +145,24 @@ export default {
       const retryMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/retry$/i);
       if (request.method === "POST" && retryMatch) {
         const id = retryMatch[1];
-        const job = await env.DB.prepare("SELECT id,status,attempt_count,max_attempts FROM production_jobs WHERE id=?").bind(id).first();
+        const job = await env.DB.prepare("SELECT id,status,attempt_count,max_attempts,next_retry_at FROM production_jobs WHERE id=?").bind(id).first();
         if (!job) return send({success:false,error:"Job not found"},404);
         if (job.status !== "failed") return send({success:false,error:"Only failed jobs can be retried"},409);
         if (job.attempt_count >= job.max_attempts) {
           return send({success:false,error:"Retry limit reached",attempt_count:job.attempt_count,max_attempts:job.max_attempts},409);
         }
+        const retryAt = job.next_retry_at ? Date.parse(job.next_retry_at) : 0;
+        if (job.next_retry_at && !Number.isFinite(retryAt)) {
+          return send({success:false,error:"Retry schedule is invalid; owner intervention is required"},409);
+        }
+        if (retryAt > Date.now()) {
+          return send({success:false,error:"Retry backoff is still active",retry_after:new Date(retryAt).toISOString()},429);
+        }
         const attemptId = crypto.randomUUID();
         const retried = await env.DB.batch([
           env.DB.prepare("INSERT INTO production_job_attempts (id,job_id,attempt_number,status,stage,started_at) SELECT ?,id,attempt_count+1,'running','queued',CURRENT_TIMESTAMP FROM production_jobs WHERE id=? AND status='failed' AND attempt_count<max_attempts")
             .bind(attemptId,id),
-          env.DB.prepare("UPDATE production_jobs SET status='queued',current_stage='queued',attempt_count=attempt_count+1,last_failed_stage=NULL,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='failed' AND attempt_count<max_attempts AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=production_jobs.attempt_count+1 AND status='running')")
+          env.DB.prepare("UPDATE production_jobs SET status='queued',current_stage='queued',attempt_count=attempt_count+1,last_failed_stage=NULL,next_retry_at=NULL,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='failed' AND attempt_count<max_attempts AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=production_jobs.attempt_count+1 AND status='running')")
             .bind(id,id)
         ]);
         if (retried.some(result => result.meta?.changes !== 1)) {
@@ -175,9 +182,10 @@ export default {
         if (["approved","rejected","failed"].includes(job.status)) return send({success:false,error:"Final or failed job state is locked"},409);
         if (stage === "failed") {
           const errorMessage = String(body.error || "Production stage failed").slice(0,1000);
+          const retryDelaySeconds = Math.min(300,30 * (2 ** (job.attempt_count - 1)));
           const failed = await env.DB.batch([
-            env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=? AND current_stage=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?)")
-              .bind(errorMessage,id,job.status,job.current_stage,id,job.attempt_count,job.current_stage),
+            env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,next_retry_at=datetime(CURRENT_TIMESTAMP,'+' || ? || ' seconds'),error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=? AND current_stage=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?)")
+              .bind(retryDelaySeconds,errorMessage,id,job.status,job.current_stage,id,job.attempt_count,job.current_stage),
             env.DB.prepare("UPDATE production_job_attempts SET status='failed',error_message=?,finished_at=CURRENT_TIMESTAMP WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?")
               .bind(errorMessage,id,job.attempt_count,job.current_stage)
           ]);
@@ -199,7 +207,7 @@ export default {
       const match = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})$/i);
       if (request.method === "GET" && match) {
         const id = match[1];
-        const job = await env.DB.prepare("SELECT id,title,format,language,status,current_stage,owner_approval_required,attempt_count,max_attempts,last_failed_stage,created_at,updated_at FROM production_jobs WHERE id=?").bind(id).first();
+        const job = await env.DB.prepare("SELECT id,title,format,language,status,current_stage,owner_approval_required,attempt_count,max_attempts,last_failed_stage,next_retry_at,created_at,updated_at FROM production_jobs WHERE id=?").bind(id).first();
         if (!job) return send({success:false,error:"Job not found"},404);
         const [assets,approvals,attempts] = await Promise.all([
           env.DB.prepare("SELECT id,asset_type,storage_provider,mime_type,size_bytes,created_at FROM production_assets WHERE job_id=? ORDER BY created_at").bind(id).all(),
