@@ -72,6 +72,24 @@ test("retry endpoint requires the orchestrator credential, not the owner credent
   assert.equal(orchestrator.status,500); // Auth passed; missing DB is handled by the protected route.
 });
 
+test("agent execution endpoints require orchestrator credentials", async () => {
+  const path="https://engine.test/jobs/00000000-0000-4000-8000-000000000001/agent-runs";
+  const ownerOnly=await invoke(request(path,"POST",{"Authorization":"Bearer owner-secret","Content-Type":"application/json"}),{
+    STUDIO_OWNER_TOKEN:"owner-secret"
+  });
+  assert.equal(ownerOnly.status,401);
+  const missing=await invoke(request(path,"POST",{"Authorization":"Bearer orchestrator-secret","Content-Type":"application/json"}),{
+    STUDIO_ORCHESTRATOR_TOKEN:"orchestrator-secret"
+  });
+  assert.equal(missing.status,500); // Orchestrator authentication passed; protected DB access failed closed.
+});
+
+test("agent run monitoring is owner-only", async () => {
+  const path="https://engine.test/jobs/00000000-0000-4000-8000-000000000001/agent-runs";
+  const denied=await invoke(request(path));
+  assert.equal(denied.status,401);
+});
+
 test("browser requests from an unapproved origin are rejected", async () => {
   const response = await invoke(request("https://engine.test/health", "GET", {
     Origin: "https://attacker.example"
