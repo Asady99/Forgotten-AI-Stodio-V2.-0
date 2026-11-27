@@ -1,0 +1,28 @@
+name: Test Forgotten AI Studio
+
+on:
+  push:
+    branches:
+      - work/ai-studio-repair-2026-11-26
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-ui-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run production engine tests
+        run: node --test tests/*.test.cjs
+      - name: Validate production database migration in SQLite
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v

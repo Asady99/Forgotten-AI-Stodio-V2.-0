@@ -1,0 +1,20 @@
+# Isolated Forgotten AI Studio staging Runner.
+# Safe to commit: contains no credentials. RUNNER_TOKEN must be added as a Worker secret.
+name = "forgotten-ai-studio-runner-staging"
+main = "production-engine/runner.js"
+compatibility_date = "2026-11-27"
+workers_dev = true
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "forgotten-ai-studio-staging-db"
+database_id = "18b43261-72e4-4306-b5fe-224e78dd0f24"
+migrations_dir = "./production-engine"
+
+[vars]
+RUNNER_ID = "forgotten-studio-staging-runner"
+# STUDIO_AI_MODEL intentionally omitted until account availability is verified.
+# RUNNER_TOKEN is a secret; never place it in this file.
