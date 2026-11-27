@@ -79,7 +79,8 @@ export default {
     }
     try {
       if (request.method === "POST" && url.pathname === "/jobs") {
-        const body = await request.json();
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send({success:false,error:"Invalid JSON body"},400);
         const title = String(body.title || body.topic || "").trim().slice(0,200);
         const format = body.format;
         const language = ["en","ur","es"].includes(body.language) ? body.language : "en";
