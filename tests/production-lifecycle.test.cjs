@@ -421,6 +421,18 @@ test("agent execution validates stage and opaque references and rejects duplicat
   assert.equal((await call("/jobs/"+id+"/agent-runs/"+runId,"POST",ORCHESTRATOR,{status:"failed"},db)).response.status,409);
 });
 
+test("failing a stage closes any active agent runs for that attempt", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const started=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued"},db);
+  const failed=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"failed",error:"research provider unavailable"},db);
+  assert.equal(failed.response.status,200);
+  const run=db.agentRuns.get(started.body.agent_run.id);
+  assert.equal(run.status,"failed");
+  assert.equal(run.error_message,"research provider unavailable");
+  assert.ok(run.finished_at);
+  assert.ok(run.duration_ms>=0);
+});
+
 test("stage progression waits for all current-stage agent runs to close", async () => {
   const db=makeDB(), id=await createJob(db);
   const started=await call("/jobs/"+id+"/agent-runs","POST",ORCHESTRATOR,{agent_name:"Research Agent",stage:"queued"},db);
