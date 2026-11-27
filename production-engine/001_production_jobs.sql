@@ -25,9 +25,12 @@ CREATE TABLE IF NOT EXISTS production_job_attempts (
 );
 CREATE TABLE IF NOT EXISTS production_agent_runs (
  id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES production_jobs(id) ON DELETE CASCADE,
+ attempt_number INTEGER NOT NULL DEFAULT 1 CHECK(attempt_number >= 1),
  agent_id INTEGER, agent_name TEXT NOT NULL, stage TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','succeeded','failed','skipped')),
- input_json TEXT, output_json TEXT, error_message TEXT, started_at TEXT, finished_at TEXT,
+ input_ref TEXT, output_ref TEXT, input_json TEXT, output_json TEXT,
+ error_message TEXT, started_at TEXT, finished_at TEXT,
+ duration_ms INTEGER CHECK(duration_ms IS NULL OR duration_ms >= 0),
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS production_assets (
@@ -45,6 +48,7 @@ CREATE TABLE IF NOT EXISTS production_approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_production_jobs_status_created ON production_jobs(status,created_at);
 CREATE INDEX IF NOT EXISTS idx_production_agent_runs_job ON production_agent_runs(job_id,created_at);
+CREATE INDEX IF NOT EXISTS idx_production_agent_runs_attempt ON production_agent_runs(job_id,attempt_number,stage,created_at);
 CREATE INDEX IF NOT EXISTS idx_production_assets_job ON production_assets(job_id,created_at);
 CREATE INDEX IF NOT EXISTS idx_production_approvals_job ON production_approvals(job_id,created_at);
 
