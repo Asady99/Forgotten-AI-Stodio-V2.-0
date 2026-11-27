@@ -8,6 +8,7 @@ Date: 2026-11-27
   1. `001_production_jobs.sql`
   2. `002_durable_queue.sql`
   3. `003_queue_failure_count.sql`
+  4. `004_staging_reference_compatibility.sql` — supplies minimal `projects`/`topics` parent keys only when absent; existing application tables and rows are preserved.
 - Verified 7 application tables, 8 indexes, 2 queue triggers, and `production_queue.failure_count` with NOT NULL/default 0.
 - `PRAGMA foreign_key_check` returned no violations.
 - No production database was changed and no production records were copied.
@@ -29,6 +30,12 @@ Latest GitHub Actions run:
 - SQLite migration suite: 12 passed, 0 failed.
 - Includes stale/expired lease protections for output persistence and terminal failure state, queue retry behavior, owner approval gates, and migration constraints.
 - The final CI run used the corrected test assertion; the earlier 49/50 result was superseded.
+
+## Staging schema compatibility correction
+- The first disposable-job insert was blocked because the isolated D1 database did not contain the host application's `projects` and `topics` parent tables referenced by nullable columns in `production_jobs`.
+- Added migration `004_staging_reference_compatibility.sql`. It uses `CREATE TABLE IF NOT EXISTS` with only integer primary keys, so existing application tables and data are untouched while standalone staging gets valid FK parents.
+- Added an isolated-database regression test that applies all four migrations without host tables, inserts a job, verifies automatic queueing and checks foreign-key integrity.
+- This correction is committed to the PR branch; it has not yet been applied to the live staging D1 database. Runtime test remains blocked until CI passes and the owner-authorized staging migration is applied.
 
 ## Runtime verification — still pending
 - Direct HTTP smoke requests from the available execution environment returned a blocked/forbidden response. Therefore public `/health` behavior and unauthenticated `/internal/tick` returning 401 have not been verified from an allowed HTTP client.
