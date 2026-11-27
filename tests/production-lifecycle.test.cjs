@@ -63,12 +63,26 @@ class FakeDB {
     return statement;
   }
   async batch(statements) {
-    if (statements.length === 2 && this.jobs.size === 0) {
+    if (statements.length === 2 && statements[0].sql?.startsWith("INSERT INTO production_jobs")) {
       const [jobStmt, approvalStmt] = statements;
       const [id,project_id,topic_id,title,format,language] = jobStmt.__args || [];
       const [approvalId,jobId] = approvalStmt.__args || [];
       this.jobs.set(id,{id,project_id,topic_id,title,format,language,status:"queued",current_stage:"queued",owner_approval_required:1});
       this.approvals.set(approvalId,{id:approvalId,job_id:jobId,approval_type:"final_video",decision:"pending"});
+      return [{meta:{changes:1}},{meta:{changes:1}}];
+    }
+    if (statements.length === 2 && statements[0].sql?.startsWith("UPDATE production_jobs SET status=?")) {
+      const [decision,stage,jobId,approvalId,approvalJobId] = statements[0].__args;
+      const [approvalDecision,notes,approvalId2,approvalJobId2,jobId2,jobStatus] = statements[1].__args;
+      const job=this.jobs.get(jobId), approval=this.approvals.get(approvalId);
+      const valid=!!job && !!approval && job.status==="awaiting_owner_approval" &&
+        approval.job_id===approvalJobId && approval.job_id===approvalJobId2 &&
+        approval.id===approvalId2 && approval.id===approvalId &&
+        approval.decision==="pending" && jobId===jobId2 &&
+        approvalDecision===decision && jobStatus===decision;
+      if (!valid) return [{meta:{changes:0}},{meta:{changes:0}}];
+      Object.assign(job,{status:decision,current_stage:stage});
+      Object.assign(approval,{decision:approvalDecision,notes});
       return [{meta:{changes:1}},{meta:{changes:1}}];
     }
     return [{meta:{changes:0}},{meta:{changes:0}}];
@@ -103,6 +117,13 @@ async function createJob(db) {
   const result=await call("/jobs","POST",OWNER,{title:"Test documentary",format:"documentary",language:"en"},db);
   assert.equal(result.response.status,201);
   return result.body.job.id;
+}
+
+async function advanceToOwnerApproval(db,id) {
+  for (const stage of ["researching","scripting","fact_checking","storyboarding","creating_visuals","creating_voice","rendering","quality_review","awaiting_owner_approval"]) {
+    const result=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage},db);
+    assert.equal(result.response.status,200, "stage "+stage+" should advance");
+  }
 }
 
 test("job creation validates required topic and production format", async () => {
@@ -154,4 +175,28 @@ test("failed jobs are terminal and cannot advance", async () => {
   const retry=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db);
   assert.equal(retry.response.status,409);
   assert.equal(db.jobs.get(id).status,"failed");
+});
+
+test("owner approval updates job and approval record together after final review", async () => {
+  const db=makeDB(), id=await createJob(db);
+  await advanceToOwnerApproval(db,id);
+  const result=await call("/jobs/"+id+"/approval","POST",OWNER,{decision:"approved",notes:"Reviewed"},db);
+  assert.equal(result.response.status,200);
+  assert.equal(result.body.publishing,"not_authorized");
+  assert.equal(db.jobs.get(id).status,"approved");
+  assert.equal([...db.approvals.values()].find(a=>a.job_id===id).decision,"approved");
+});
+
+test("simultaneous owner approval requests allow only one state change", async () => {
+  const db=makeDB(), id=await createJob(db);
+  await advanceToOwnerApproval(db,id);
+  const results=await Promise.all([
+    call("/jobs/"+id+"/approval","POST",OWNER,{decision:"approved"},db),
+    call("/jobs/"+id+"/approval","POST",OWNER,{decision:"rejected"},db)
+  ]);
+  assert.deepEqual(results.map(x=>x.response.status).sort(),[200,409]);
+  const finalJob=db.jobs.get(id).status;
+  const finalApproval=[...db.approvals.values()].find(a=>a.job_id===id).decision;
+  assert.equal(finalJob,finalApproval);
+  assert.ok(["approved","rejected"].includes(finalJob));
 });
