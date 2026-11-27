@@ -1,0 +1,61 @@
+import sqlite3
+import unittest
+from pathlib import Path
+
+MIGRATION = Path(__file__).resolve().parents[1] / "production-engine" / "001_production_jobs.sql"
+
+class ProductionMigrationTests(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.execute("PRAGMA foreign_keys = ON")
+        self.sql = MIGRATION.read_text(encoding="utf-8")
+        self.db.executescript(self.sql)
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_creates_all_four_production_tables_and_indexes(self):
+        tables = {r[0] for r in self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({"production_jobs", "production_agent_runs",
+                         "production_assets", "production_approvals"}.issubset(tables))
+        indexes = {r[0] for r in self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'")}
+        self.assertTrue({"idx_production_jobs_status_created",
+                         "idx_production_agent_runs_job",
+                         "idx_production_assets_job",
+                         "idx_production_approvals_job"}.issubset(indexes))
+
+    def test_job_constraints_and_default_owner_approval(self):
+        self.db.execute(
+            "INSERT INTO production_jobs (id,title,format) VALUES ('j1','Test','documentary')")
+        row = self.db.execute(
+            "SELECT status,current_stage,owner_approval_required,language FROM production_jobs WHERE id='j1'"
+        ).fetchone()
+        self.assertEqual(row, ("queued", "queued", 1, "en"))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO production_jobs (id,title,format) VALUES ('j2','Bad','movie')")
+
+    def test_foreign_keys_and_cascade_delete(self):
+        self.db.execute(
+            "INSERT INTO production_jobs (id,title,format) VALUES ('j1','Test','short')")
+        self.db.execute(
+            "INSERT INTO production_approvals (id,job_id,approval_type,decision) "
+            "VALUES ('a1','j1','final_video','pending')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO production_approvals (id,job_id,approval_type,decision) "
+                "VALUES ('a2','missing','final_video','pending')")
+        self.db.execute("DELETE FROM production_jobs WHERE id='j1'")
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM production_approvals").fetchone()[0], 0)
+
+    def test_migration_can_be_applied_twice_without_schema_errors(self):
+        self.db.executescript(self.sql)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'production_%'"
+        ).fetchone()[0], 4)
+
+if __name__ == "__main__":
+    unittest.main()
