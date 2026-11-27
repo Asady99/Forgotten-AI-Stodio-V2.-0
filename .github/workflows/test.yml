@@ -24,3 +24,5 @@ jobs:
           node-version: 22
       - name: Run production engine tests
         run: node --test tests/*.test.cjs
+      - name: Validate production database migration in SQLite
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
