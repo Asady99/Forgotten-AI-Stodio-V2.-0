@@ -17,7 +17,7 @@ const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:
 const safeError=v=>String(v||"Agent execution failed").replace(/bearer\s+[^\s]+/gi,"Bearer [REDACTED]").replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,"$1=[REDACTED]").slice(0,800);
 async function claim(db,owner){
  const token=crypto.randomUUID();
- const sql="UPDATE production_queue SET status='leased',lease_owner=?,lease_token=?,lease_expires_at=datetime('now','+5 minutes'),heartbeat_at=CURRENT_TIMESTAMP,delivery_count=delivery_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=(SELECT id FROM production_queue WHERE (status='pending' AND available_at<=CURRENT_TIMESTAMP) OR (status='leased' AND lease_expires_at<=CURRENT_TIMESTAMP) ORDER BY available_at,id LIMIT 1) AND ((status='pending' AND available_at<=CURRENT_TIMESTAMP) OR (status='leased' AND lease_expires_at<=CURRENT_TIMESTAMP)) RETURNING id,job_id,delivery_count,max_deliveries";
+ const sql="UPDATE production_queue SET status='leased',lease_owner=?,lease_token=?,lease_expires_at=datetime('now','+5 minutes'),heartbeat_at=CURRENT_TIMESTAMP,delivery_count=delivery_count+1,updated_at=CURRENT_TIMESTAMP WHERE id=(SELECT id FROM production_queue WHERE (status='pending' AND available_at<=CURRENT_TIMESTAMP) OR (status='leased' AND lease_expires_at<=CURRENT_TIMESTAMP) ORDER BY available_at,id LIMIT 1) AND ((status='pending' AND available_at<=CURRENT_TIMESTAMP) OR (status='leased' AND lease_expires_at<=CURRENT_TIMESTAMP)) RETURNING id,job_id,delivery_count,failure_count,max_deliveries";
  const row=await db.prepare(sql).bind(owner,token).first();
  return row?{...row,lease_token:token}:null;
 }
@@ -26,9 +26,9 @@ async function heartbeat(db,item,owner){
  return r.meta?.changes===1;
 }
 async function failDelivery(db,item,owner,error){
- const message=safeError(error),terminal=item.delivery_count>=item.max_deliveries,delay=Math.min(300,15*(2**Math.max(0,item.delivery_count-1)));
+ const message=safeError(error),terminal=(item.failure_count+1)>=item.max_deliveries,delay=Math.min(300,15*(2**Math.max(0,item.delivery_count-1)));
  const writes=[
-  db.prepare("UPDATE production_queue SET status=?,available_at=datetime('now',?),lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=CURRENT_TIMESTAMP,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='leased' AND lease_owner=? AND lease_token=?").bind(terminal?"dead":"pending",terminal?"+0 seconds":"+"+delay+" seconds",message,item.id,owner,item.lease_token)
+  db.prepare("UPDATE production_queue SET status=?,failure_count=failure_count+1,available_at=datetime('now',?),lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=CURRENT_TIMESTAMP,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='leased' AND lease_owner=? AND lease_token=?").bind(terminal?"dead":"pending",terminal?"+0 seconds":"+"+delay+" seconds",message,item.id,owner,item.lease_token)
  ];
  if(terminal){
   writes.push(db.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status NOT IN ('approved','rejected','awaiting_owner_approval')").bind(message,item.job_id));
