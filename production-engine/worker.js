@@ -104,7 +104,8 @@ export default {
       }
       const approvalMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/approval$/i);
       if (request.method === "POST" && approvalMatch) {
-        const body = await request.json();
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send({success:false,error:"Invalid JSON body"},400);
         const decision = body.decision;
         if (!["approved","rejected"].includes(decision)) return send({success:false,error:"Decision must be approved or rejected"},400);
         const id = approvalMatch[1];
@@ -125,7 +126,8 @@ export default {
       }
       const stageMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/stage$/i);
       if (request.method === "POST" && stageMatch) {
-        const body = await request.json();
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send({success:false,error:"Invalid JSON body"},400);
         const stage = String(body.stage || "");
         if (!stages.includes(stage)) return send({success:false,error:"Unknown or owner-only production stage"},400);
         const id = stageMatch[1];
