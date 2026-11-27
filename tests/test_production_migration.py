@@ -8,6 +8,12 @@ class ProductionMigrationTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
         self.db.execute("PRAGMA foreign_keys = ON")
+        self.db.executescript("""
+            CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+            CREATE TABLE topics (id INTEGER PRIMARY KEY, title_en TEXT NOT NULL);
+            INSERT INTO projects (id,name) VALUES (1,'Forgotten AI Studio');
+            INSERT INTO topics (id,title_en) VALUES (96,'Test topic');
+        """)
         self.sql = MIGRATION.read_text(encoding="utf-8")
         self.db.executescript(self.sql)
 
@@ -36,6 +42,25 @@ class ProductionMigrationTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(
                 "INSERT INTO production_jobs (id,title,format) VALUES ('j2','Bad','movie')")
+
+    def test_job_project_and_topic_foreign_keys(self):
+        self.db.execute(
+            "INSERT INTO production_jobs (id,project_id,topic_id,title,format) "
+            "VALUES ('linked',1,96,'Linked job','documentary')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO production_jobs (id,project_id,title,format) "
+                "VALUES ('bad-project',999,'Bad project','short')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO production_jobs (id,topic_id,title,format) "
+                "VALUES ('bad-topic',999,'Bad topic','short')")
+        self.db.execute("DELETE FROM projects WHERE id=1")
+        self.assertIsNone(self.db.execute(
+            "SELECT project_id FROM production_jobs WHERE id='linked'").fetchone()[0])
+        self.db.execute("DELETE FROM topics WHERE id=96")
+        self.assertIsNone(self.db.execute(
+            "SELECT topic_id FROM production_jobs WHERE id='linked'").fetchone()[0])
 
     def test_foreign_keys_and_cascade_delete(self):
         self.db.execute(
