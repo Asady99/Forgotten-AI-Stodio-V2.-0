@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS production_jobs (
  owner_approval_required INTEGER NOT NULL DEFAULT 1 CHECK(owner_approval_required=1),
  attempt_count INTEGER NOT NULL DEFAULT 1 CHECK(attempt_count >= 1),
  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK(max_attempts BETWEEN 1 AND 10),
- last_failed_stage TEXT,
+ last_failed_stage TEXT, next_retry_at TEXT,
  error_message TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
