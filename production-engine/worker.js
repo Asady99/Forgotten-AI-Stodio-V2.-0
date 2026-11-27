@@ -196,7 +196,7 @@ export default {
         if (body.agent_id !== undefined && body.agent_id !== null && (!Number.isSafeInteger(body.agent_id) || body.agent_id < 1)) return send({success:false,error:"Invalid agent_id"},400);
         const safeReference = (value) => {
           if (value === undefined || value === null || value === "") return null;
-          if (typeof value !== "string" || value.length > 500 || !/^(asset|research|script|storyboard|audio|video|external):[A-Za-z0-9._:/-]{1,450}$/.test(value)) return false;
+          if (typeof value !== "string" || value.length > 500 || !/^(asset|research|script|storyboard|audio|video|external):[A-Za-z0-9._/-]{1,450}$/.test(value)) return false;
           return value;
         };
         const inputRef = safeReference(body.input_ref);
@@ -215,7 +215,7 @@ export default {
         if (!["succeeded","failed","skipped"].includes(status)) return send({success:false,error:"Agent run status must be succeeded, failed, or skipped"},400);
         const safeReference = (value) => {
           if (value === undefined || value === null || value === "") return null;
-          if (typeof value !== "string" || value.length > 500 || !/^(asset|research|script|storyboard|audio|video|external):[A-Za-z0-9._:/-]{1,450}$/.test(value)) return false;
+          if (typeof value !== "string" || value.length > 500 || !/^(asset|research|script|storyboard|audio|video|external):[A-Za-z0-9._/-]{1,450}$/.test(value)) return false;
           return value;
         };
         const outputRef = safeReference(body.output_ref);
