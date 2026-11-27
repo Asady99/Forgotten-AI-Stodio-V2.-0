@@ -237,17 +237,19 @@ export default {
             env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,next_retry_at=strftime('%Y-%m-%dT%H:%M:%fZ',CURRENT_TIMESTAMP,'+' || ? || ' seconds'),error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=? AND current_stage=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?)")
               .bind(retryDelaySeconds,errorMessage,id,job.status,job.current_stage,id,job.attempt_count,job.current_stage),
             env.DB.prepare("UPDATE production_job_attempts SET status='failed',error_message=?,finished_at=CURRENT_TIMESTAMP WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?")
+              .bind(errorMessage,id,job.attempt_count,job.current_stage),
+            env.DB.prepare("UPDATE production_agent_runs SET status='failed',error_message=?,finished_at=CURRENT_TIMESTAMP,duration_ms=CAST(MAX(0,(julianday(CURRENT_TIMESTAMP)-julianday(started_at))*86400000) AS INTEGER) WHERE job_id=? AND attempt_number=? AND stage=? AND status='running'")
               .bind(errorMessage,id,job.attempt_count,job.current_stage)
           ]);
-          if (failed.some(result => result.meta?.changes !== 1)) return send({success:false,error:"Job or attempt state changed concurrently; refresh and retry"},409);
+          if (failed.slice(0,2).some(result => result.meta?.changes !== 1)) return send({success:false,error:"Job or attempt state changed concurrently; refresh and retry"},409);
           return send({success:true,job_id:id,status:"failed",failed_stage:job.current_stage,attempt_count:job.attempt_count,stage_label:publicStage("failed")});
         }
         const currentIndex = stages.indexOf(job.current_stage);
         const nextIndex = stages.indexOf(stage);
         if (nextIndex !== currentIndex + 1) return send({success:false,error:"Invalid stage transition",current_stage:job.current_stage,required_next_stage:stages[currentIndex+1] || null},409);
         const advanced = await env.DB.batch([
-          env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND current_stage=? AND status=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?)")
-            .bind(stage,stage,id,job.current_stage,job.status,id,job.attempt_count,job.current_stage),
+          env.DB.prepare("UPDATE production_jobs SET status=?,current_stage=?,error_message=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND current_stage=? AND status=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?) AND NOT EXISTS (SELECT 1 FROM production_agent_runs WHERE job_id=? AND attempt_number=? AND stage=? AND status='running')")
+            .bind(stage,stage,id,job.current_stage,job.status,id,job.attempt_count,job.current_stage,id,job.attempt_count,job.current_stage),
           env.DB.prepare("UPDATE production_job_attempts SET stage=?,status=CASE WHEN ?='awaiting_owner_approval' THEN 'succeeded' ELSE 'running' END,finished_at=CASE WHEN ?='awaiting_owner_approval' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?")
             .bind(stage,stage,stage,id,job.attempt_count,job.current_stage)
         ]);
