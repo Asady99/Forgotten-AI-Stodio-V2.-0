@@ -1,0 +1,20 @@
+# Example only. Copy and replace placeholders before any staging deployment.
+# This file does not deploy anything and contains no secrets.
+name = "forgotten-ai-studio-runner-staging"
+main = "production-engine/runner.js"
+compatibility_date = "2026-11-27"
+workers_dev = true
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "REPLACE_WITH_STAGING_D1_DATABASE_NAME"
+database_id = "REPLACE_WITH_STAGING_D1_DATABASE_ID"
+migrations_dir = "./production-engine"
+
+[vars]
+RUNNER_ID = "forgotten-studio-staging-runner"
+# Optional: set STUDIO_AI_MODEL only after confirming the model is available
+# to this Cloudflare account. Never put RUNNER_TOKEN in this file.
