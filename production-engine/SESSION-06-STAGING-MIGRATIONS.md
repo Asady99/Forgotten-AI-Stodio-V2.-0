@@ -57,3 +57,12 @@ The runner is a single Workers AI model executing nine prompt-driven stages, not
 3. Re-test public health and unauthenticated tick behavior from an allowed HTTP client.
 4. Only after a separate approval, create one disposable staging job and execute one authenticated tick; then inspect each persisted stage and retry behavior.
 5. Keep cron disabled until all manual staging checks pass.
+
+## Updated staging runner deployed — 2026-11-27
+
+- After explicit owner approval, the updated production-engine/runner.js from the working branch was uploaded to the existing staging Worker using the content-only update endpoint.
+- The content-only update preserved Worker settings. A follow-up read confirmed the D1 staging binding, Workers AI binding, and existing RUNNER_TOKEN secret binding are still present.
+- Cron schedules remain empty; workers.dev remains enabled and preview URLs remain disabled.
+- No secret value was read, displayed, rotated, or deleted. The existing secret remains required for authenticated tick requests.
+- No test job was created and no authenticated tick was invoked. Runtime HTTP smoke tests remain blocked from the current execution environment; do not treat deployment as a passing runtime test.
+- No production resources, publishing settings, or recurring schedules were changed.
