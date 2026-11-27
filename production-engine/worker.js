@@ -23,6 +23,11 @@ const stages = [
   "creating_visuals","creating_voice","rendering","quality_review",
   "awaiting_owner_approval","failed"
 ];
+const redactDiagnostic = (value) => String(value || "")
+  .replace(/bearer\s+[^\s]+/gi,"Bearer [REDACTED]")
+  .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,"$1=[REDACTED]")
+  .slice(0,1000);
+const safeDiagnosticRows = (rows) => rows.map(row => ({...row,error_message:redactDiagnostic(row.error_message)}));
 const publicStage = (s) => ({
   queued:"Queued", researching:"Preparing", scripting:"Preparing",
   fact_checking:"Preparing", storyboarding:"Preparing",
@@ -176,7 +181,7 @@ export default {
         const job = await env.DB.prepare("SELECT id FROM production_jobs WHERE id=?").bind(id).first();
         if (!job) return send({success:false,error:"Job not found"},404);
         const runs = await env.DB.prepare("SELECT id,attempt_number,agent_id,agent_name,stage,status,input_ref,output_ref,error_message,started_at,finished_at,duration_ms,created_at FROM production_agent_runs WHERE job_id=? ORDER BY created_at DESC LIMIT 200").bind(id).all();
-        return send({success:true,job_id:id,count:runs.results.length,agent_runs:runs.results});
+        return send({success:true,job_id:id,count:runs.results.length,agent_runs:safeDiagnosticRows(runs.results)});
       }
       if (request.method === "POST" && agentRunsMatch) {
         const body = await request.json().catch(() => null);
@@ -215,7 +220,7 @@ export default {
         };
         const outputRef = safeReference(body.output_ref);
         if (outputRef === false) return send({success:false,error:"output_ref must be a typed opaque reference, not raw data or a URL"},400);
-        const errorMessage = status === "failed" ? String(body.error || "Agent execution failed").replace(/bearer\s+[^\s]+/gi,"Bearer [REDACTED]").replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,"$1=[REDACTED]").slice(0,1000) : null;
+        const errorMessage = status === "failed" ? redactDiagnostic(body.error || "Agent execution failed") : null;
         const completed = await env.DB.prepare("UPDATE production_agent_runs SET status=?,output_ref=?,error_message=?,finished_at=CURRENT_TIMESTAMP,duration_ms=CAST(MAX(0,(julianday(CURRENT_TIMESTAMP)-julianday(started_at))*86400000) AS INTEGER) WHERE id=? AND job_id=? AND status='running' AND attempt_number=(SELECT attempt_count FROM production_jobs WHERE id=?)").bind(status,outputRef,errorMessage,runId,jobId,jobId).run();
         if (completed.meta?.changes !== 1) return send({success:false,error:"Agent run not found, already closed, or belongs to an earlier attempt"},409);
         return send({success:true,agent_run_id:runId,status,output_ref:outputRef});
@@ -231,7 +236,7 @@ export default {
         if (!job) return send({success:false,error:"Job not found"},404);
         if (["approved","rejected","failed"].includes(job.status)) return send({success:false,error:"Final or failed job state is locked"},409);
         if (stage === "failed") {
-          const errorMessage = String(body.error || "Production stage failed").slice(0,1000);
+          const errorMessage = redactDiagnostic(body.error || "Production stage failed");
           const retryDelaySeconds = Math.min(300,30 * (2 ** (job.attempt_count - 1)));
           const failed = await env.DB.batch([
             env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,next_retry_at=strftime('%Y-%m-%dT%H:%M:%fZ',CURRENT_TIMESTAMP,'+' || ? || ' seconds'),error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=? AND current_stage=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?)")
@@ -267,7 +272,7 @@ export default {
           env.DB.prepare("SELECT attempt_number,status,stage,error_message,started_at,finished_at,created_at FROM production_job_attempts WHERE job_id=? ORDER BY attempt_number").bind(id).all(),
           env.DB.prepare("SELECT id,attempt_number,agent_id,agent_name,stage,status,input_ref,output_ref,error_message,started_at,finished_at,duration_ms,created_at FROM production_agent_runs WHERE job_id=? ORDER BY created_at DESC LIMIT 200").bind(id).all()
         ]);
-        return send({success:true,job:{...job,stage_label:publicStage(job.current_stage)},assets:assets.results,approvals:approvals.results,attempts:attempts.results,agent_runs:agentRuns.results});
+        return send({success:true,job:{...job,stage_label:publicStage(job.current_stage)},assets:assets.results,approvals:approvals.results,attempts:safeDiagnosticRows(attempts.results),agent_runs:safeDiagnosticRows(agentRuns.results)});
       }
       return send({success:false,error:"Not found"},404);
     } catch (_) {
