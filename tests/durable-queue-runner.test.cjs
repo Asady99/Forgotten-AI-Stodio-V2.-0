@@ -1,0 +1,10 @@
+const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path");
+const runner=fs.readFileSync(path.join(__dirname,"..","production-engine","runner.js"),"utf8");
+const migration=fs.readFileSync(path.join(__dirname,"..","production-engine","002_durable_queue.sql"),"utf8");
+test("scheduled worker exposes authenticated tick only",()=>{assert.match(runner,/async scheduled\(event,env,ctx\)/);assert.match(runner,/\/internal\/tick/);assert.match(runner,/env\.RUNNER_TOKEN/);});
+test("model execution requires D1 and Workers AI without paid fallback",()=>{assert.match(runner,/!env\.AI/);assert.match(runner,/no paid fallback/);assert.match(runner,/paid_fallbacks:false/);assert.doesNotMatch(runner,/api\.elevenlabs|runwayml/i);});
+test("durable claims include expiry recovery, lease token and heartbeat",()=>{assert.match(runner,/lease_expires_at<=CURRENT_TIMESTAMP/);assert.match(runner,/lease_token/);assert.match(runner,/heartbeat_at=CURRENT_TIMESTAMP/);});
+test("all nine production stages have named agents and sequential next stages",()=>{for(const stage of ["queued","researching","scripting","fact_checking","storyboarding","creating_visuals","creating_voice","rendering","quality_review"])assert.match(runner,new RegExp(stage+":\\{next:"));});
+test("runner persists bounded outputs and attempt-scoped agent runs",()=>{assert.match(runner,/INSERT INTO production_agent_outputs/);assert.match(runner,/INSERT INTO production_agent_runs/);assert.match(runner,/output\.slice\(0,24000\)/);});
+test("queue triggers enqueue new jobs and reset queue on retry",()=>{assert.match(migration,/trg_production_jobs_enqueue/);assert.match(migration,/trg_production_jobs_retry_enqueue/);assert.match(migration,/ON CONFLICT\(job_id\) DO UPDATE/);});
+test("final stage stops at owner approval and cannot publish",()=>{assert.match(runner,/awaiting_owner_approval/);assert.match(runner,/publishing:false/);assert.doesNotMatch(runner,/youtube\.com\/upload|publishVideo/i);});
