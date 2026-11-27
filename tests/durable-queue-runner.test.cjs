@@ -38,3 +38,13 @@ test("stale or expired queue leases cannot persist agent outputs",()=>{
  assert.equal((runner.match(/WHERE changes\(\)!=1/g)||[]).length,1,"one shared sentinel is reused after each guarded write");
  assert.match(runner,/zero-row write into a SQL error/);
 });
+test("stale or expired leases cannot mutate failure or terminal job state",()=>{
+ const start=runner.indexOf("async function failDelivery");
+ const end=runner.indexOf("async function processOne",start);
+ const failure=runner.slice(start,end);
+ assert.match(failure,/lease_expires_at>CURRENT_TIMESTAMP/);
+ assert.match(failure,/WHERE changes\(\)!=1/);
+ assert.match(failure,/q\.status='dead'/);
+ assert.match(failure,/await db\.batch\(writes\)/);
+ assert.equal((failure.match(/requireOneChange/g)||[]).length,4,"queue, job and attempt writes each have a rollback guard");
+});
