@@ -79,7 +79,7 @@ class FakeDB {
       const [id,project_id,topic_id,title,format,language] = jobStmt.__args || [];
       const [approvalId,jobId] = approvalStmt.__args || [];
       const [attemptId,attemptJobId] = attemptStmt.__args || [];
-      this.jobs.set(id,{id,project_id,topic_id,title,format,language,status:"queued",current_stage:"queued",owner_approval_required:1,attempt_count:1,max_attempts:3,last_failed_stage:null});
+      this.jobs.set(id,{id,project_id,topic_id,title,format,language,status:"queued",current_stage:"queued",owner_approval_required:1,attempt_count:1,max_attempts:3,last_failed_stage:null,next_retry_at:null});
       this.approvals.set(approvalId,{id:approvalId,job_id:jobId,approval_type:"final_video",decision:"pending"});
       this.attempts.set(attemptId,{id:attemptId,job_id:attemptJobId,attempt_number:1,status:"running",stage:"queued",error_message:null});
       return [{meta:{changes:1}},{meta:{changes:1}},{meta:{changes:1}}];
@@ -87,20 +87,20 @@ class FakeDB {
     if (statements.length === 2 && firstSql.startsWith("INSERT INTO production_job_attempts")) {
       const [attemptId,jobId]=statements[0].__args;
       const job=this.jobs.get(jobId);
-      if (!job || job.status!=="failed" || job.attempt_count>=job.max_attempts) return [{meta:{changes:0}},{meta:{changes:0}}];
+      if (!job || job.status!=="failed" || job.attempt_count>=job.max_attempts || (job.next_retry_at && Date.parse(job.next_retry_at)>Date.now())) return [{meta:{changes:0}},{meta:{changes:0}}];
       const number=job.attempt_count+1;
       this.attempts.set(attemptId,{id:attemptId,job_id:jobId,attempt_number:number,status:"running",stage:"queued",error_message:null});
       if (job.status!=="failed" || job.attempt_count>=job.max_attempts || !this.attempts.has(attemptId)) return [{meta:{changes:1}},{meta:{changes:0}}];
-      Object.assign(job,{status:"queued",current_stage:"queued",attempt_count:number,last_failed_stage:null,error_message:null});
+      Object.assign(job,{status:"queued",current_stage:"queued",attempt_count:number,last_failed_stage:null,next_retry_at:null,error_message:null});
       return [{meta:{changes:1}},{meta:{changes:1}}];
     }
     if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status='failed'")) {
-      const [error,id,status,stage,jobId,attemptNumber,attemptStage]=statements[0].__args;
+      const [delaySeconds,error,id,status,stage,jobId,attemptNumber,attemptStage]=statements[0].__args;
       const [attemptError,attemptJobId,attemptNo,attemptOldStage]=statements[1].__args;
       const job=this.jobs.get(id);
       const attempt=[...this.attempts.values()].find(a=>a.job_id===attemptJobId && a.attempt_number===attemptNo);
       if (!job || !attempt || job.status!==status || job.current_stage!==stage || job.attempt_count!==attemptNumber || attempt.status!=="running" || attempt.stage!==attemptStage || attemptOldStage!==stage) return [{meta:{changes:0}},{meta:{changes:0}}];
-      Object.assign(job,{status:"failed",current_stage:"failed",last_failed_stage:stage,error_message:error});
+      Object.assign(job,{status:"failed",current_stage:"failed",last_failed_stage:stage,next_retry_at:new Date(Date.now()+delaySeconds*1000).toISOString(),error_message:error});
       Object.assign(attempt,{status:"failed",error_message:attemptError});
       return [{meta:{changes:1}},{meta:{changes:1}}];
     }
@@ -240,8 +240,24 @@ test("unknown stages and invalid approval decisions are rejected", async () => {
 async function failCurrentAttempt(db,id,error="test failure") {
   const result=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"failed",error},db);
   assert.equal(result.response.status,200);
+  db.jobs.get(id).next_retry_at=null; // Helper advances the clock past the backoff for non-backoff tests.
   return result;
 }
+
+test("retry endpoint enforces exponential backoff before creating the next attempt", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const failed=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"failed",error:"temporary failure"},db);
+  assert.equal(failed.response.status,200);
+  assert.ok(db.jobs.get(id).next_retry_at);
+  const blocked=await call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db);
+  assert.equal(blocked.response.status,429);
+  assert.equal(blocked.body.error,"Retry backoff is still active");
+  assert.equal(db.jobs.get(id).attempt_count,1);
+  db.jobs.get(id).next_retry_at=null;
+  const ready=await call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db);
+  assert.equal(ready.response.status,200);
+  assert.equal(db.jobs.get(id).attempt_count,2);
+});
 
 test("failed jobs preserve attempt history and can be retried once", async () => {
   const db=makeDB(), id=await createJob(db);
