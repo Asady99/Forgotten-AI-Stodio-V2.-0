@@ -111,7 +111,7 @@ export default {
           env.DB.prepare("INSERT INTO production_job_attempts (id,job_id,attempt_number,status,stage,started_at) VALUES (?,?,1,'running','queued',CURRENT_TIMESTAMP)")
             .bind(crypto.randomUUID(),id)
         ]);
-        if (created.some(result => result.meta?.changes !== 1)) {}
+        if (created.some(result => result.meta?.changes !== 1)) {
           throw new Error("Atomic job creation did not complete");
         }
         return send({success:true,job:{id,title,format,language,status:"queued",stage_label:publicStage("queued"),owner_approval_required:true}},201);
