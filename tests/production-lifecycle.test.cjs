@@ -111,7 +111,7 @@ class FakeDB {
       Object.assign(job,{status:"queued",current_stage:"queued",attempt_count:number,last_failed_stage:null,next_retry_at:null,error_message:null});
       return [{meta:{changes:1}},{meta:{changes:1}}];
     }
-    if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status='failed'")) {
+    if (statements.length === 3 && firstSql.startsWith("UPDATE production_jobs SET status='failed'")) {
       const [delaySeconds,error,id,status,stage,jobId,attemptNumber,attemptStage]=statements[0].__args;
       const [attemptError,attemptJobId,attemptNo,attemptOldStage]=statements[1].__args;
       const job=this.jobs.get(id);
@@ -119,7 +119,14 @@ class FakeDB {
       if (!job || !attempt || job.status!==status || job.current_stage!==stage || job.attempt_count!==attemptNumber || attempt.status!=="running" || attempt.stage!==attemptStage || attemptOldStage!==stage) return [{meta:{changes:0}},{meta:{changes:0}}];
       Object.assign(job,{status:"failed",current_stage:"failed",last_failed_stage:stage,next_retry_at:new Date(Date.now()+delaySeconds*1000).toISOString(),error_message:error});
       Object.assign(attempt,{status:"failed",error_message:attemptError});
-      return [{meta:{changes:1}},{meta:{changes:1}}];
+      let closedRuns=0;
+      for (const run of db.agentRuns.values()) {
+        if (run.job_id===id && run.attempt_number===attemptNumber && run.stage===stage && run.status==="running") {
+          Object.assign(run,{status:"failed",error_message:error,finished_at:"2026-11-27T00:00:01Z",duration_ms:1000});
+          closedRuns++;
+        }
+      }
+      return [{meta:{changes:1}},{meta:{changes:1}},{meta:{changes:closedRuns}}];
     }
     if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status=?,current_stage=?") && firstSql.includes("production_job_attempts")) {
       const [status,stage,id,oldStage,oldStatus,jobId,attemptNumber,attemptStage]=statements[0].__args;
