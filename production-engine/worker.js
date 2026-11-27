@@ -65,9 +65,9 @@ export default {
         paid_fallbacks:false
       });
     }
-    const isOrchestratorStage = request.method === "POST" && (/^\/jobs\/[0-9a-f-]{36}\/stage$/i.test(url.pathname) || /^\/jobs\/[0-9a-f-]{36}\/retry$/i.test(url.pathname));
+    const isOrchestratorStage = request.method === "POST" && (/^\/jobs\/[0-9a-f-]{36}\/stage$/i.test(url.pathname) || /^\/jobs\/[0-9a-f-]{36}\/retry$/i.test(url.pathname) || /^\/jobs\/[0-9a-f-]{36}\/agent-runs$/i.test(url.pathname) || /^\/jobs\/[0-9a-f-]{36}\/agent-runs\/[0-9a-f-]{36}$/i.test(url.pathname));
     const isOwnerAction = (request.method === "POST" && (url.pathname === "/jobs" || /^\/jobs\/[0-9a-f-]{36}\/approval$/i.test(url.pathname))) ||
-      (request.method === "GET" && (url.pathname === "/jobs" || /^\/jobs\/[0-9a-f-]{36}$/i.test(url.pathname)));
+      (request.method === "GET" && (url.pathname === "/jobs" || /^\/jobs\/[0-9a-f-]{36}$/i.test(url.pathname) || /^\/jobs\/[0-9a-f-]{36}\/agent-runs$/i.test(url.pathname)));
     // ctx.access exists only when Cloudflare Access authenticated this direct Worker request.
     const accessIdentity = ctx?.access ? await ctx.access.getIdentity().catch(() => null) : null;
     const configuredOwnerEmail = String(env.STUDIO_OWNER_EMAIL || "").trim().toLowerCase();
@@ -170,6 +170,56 @@ export default {
         }
         return send({success:true,job_id:id,status:"queued",attempt_count:job.attempt_count+1,max_attempts:job.max_attempts,attempts_remaining:job.max_attempts-job.attempt_count-1});
       }
+      const agentRunsMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/agent-runs$/i);
+      if (request.method === "GET" && agentRunsMatch) {
+        const id = agentRunsMatch[1];
+        const job = await env.DB.prepare("SELECT id FROM production_jobs WHERE id=?").bind(id).first();
+        if (!job) return send({success:false,error:"Job not found"},404);
+        const runs = await env.DB.prepare("SELECT id,attempt_number,agent_id,agent_name,stage,status,input_ref,output_ref,error_message,started_at,finished_at,duration_ms,created_at FROM production_agent_runs WHERE job_id=? ORDER BY created_at DESC LIMIT 200").bind(id).all();
+        return send({success:true,job_id:id,count:runs.results.length,agent_runs:runs.results});
+      }
+      if (request.method === "POST" && agentRunsMatch) {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send({success:false,error:"Invalid JSON body"},400);
+        const id = agentRunsMatch[1];
+        const job = await env.DB.prepare("SELECT id,status,current_stage,attempt_count FROM production_jobs WHERE id=?").bind(id).first();
+        if (!job) return send({success:false,error:"Job not found"},404);
+        if (["failed","approved","rejected","awaiting_owner_approval"].includes(job.status)) return send({success:false,error:"Job is not accepting agent runs"},409);
+        const agentName = String(body.agent_name || "").trim().slice(0,100);
+        const stage = String(body.stage || "");
+        if (!agentName || stage !== job.current_stage) return send({success:false,error:"A valid agent_name and the job's current stage are required"},400);
+        if (body.agent_id !== undefined && body.agent_id !== null && (!Number.isSafeInteger(body.agent_id) || body.agent_id < 1)) return send({success:false,error:"Invalid agent_id"},400);
+        const safeReference = (value) => {
+          if (value === undefined || value === null || value === "") return null;
+          if (typeof value !== "string" || value.length > 500 || !/^(asset|research|script|storyboard|audio|video|external):[A-Za-z0-9._:/-]{1,450}$/.test(value)) return false;
+          return value;
+        };
+        const inputRef = safeReference(body.input_ref);
+        if (inputRef === false) return send({success:false,error:"input_ref must be a typed opaque reference, not raw data or a URL"},400);
+        const runId = crypto.randomUUID();
+        const createdRun = await env.DB.prepare("INSERT INTO production_agent_runs (id,job_id,attempt_number,agent_id,agent_name,stage,status,input_ref,started_at) SELECT ?,id,attempt_count,?,?,?,'running',?,CURRENT_TIMESTAMP FROM production_jobs WHERE id=? AND status NOT IN ('failed','approved','rejected','awaiting_owner_approval') AND current_stage=? AND attempt_count=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running')").bind(runId,body.agent_id || null,agentName,stage,inputRef,id,stage,job.attempt_count,id,job.attempt_count).run();
+        if (createdRun.meta?.changes !== 1) return send({success:false,error:"Job stage or attempt changed; refresh before starting the agent"},409);
+        return send({success:true,agent_run:{id:runId,job_id:id,attempt_number:job.attempt_count,agent_id:body.agent_id || null,agent_name:agentName,stage,status:"running",input_ref:inputRef}},201);
+      }
+      const agentRunMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/agent-runs\/([0-9a-f-]{36})$/i);
+      if (request.method === "POST" && agentRunMatch) {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send({success:false,error:"Invalid JSON body"},400);
+        const [,jobId,runId] = agentRunMatch;
+        const status = body.status;
+        if (!["succeeded","failed","skipped"].includes(status)) return send({success:false,error:"Agent run status must be succeeded, failed, or skipped"},400);
+        const safeReference = (value) => {
+          if (value === undefined || value === null || value === "") return null;
+          if (typeof value !== "string" || value.length > 500 || !/^(asset|research|script|storyboard|audio|video|external):[A-Za-z0-9._:/-]{1,450}$/.test(value)) return false;
+          return value;
+        };
+        const outputRef = safeReference(body.output_ref);
+        if (outputRef === false) return send({success:false,error:"output_ref must be a typed opaque reference, not raw data or a URL"},400);
+        const errorMessage = status === "failed" ? String(body.error || "Agent execution failed").replace(/bearer\s+[^\s]+/gi,"Bearer [REDACTED]").replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,"$1=[REDACTED]").slice(0,1000) : null;
+        const completed = await env.DB.prepare("UPDATE production_agent_runs SET status=?,output_ref=?,error_message=?,finished_at=CURRENT_TIMESTAMP,duration_ms=CAST(MAX(0,(julianday(CURRENT_TIMESTAMP)-julianday(started_at))*86400000) AS INTEGER) WHERE id=? AND job_id=? AND status='running' AND attempt_number=(SELECT attempt_count FROM production_jobs WHERE id=?)").bind(status,outputRef,errorMessage,runId,jobId,jobId).run();
+        if (completed.meta?.changes !== 1) return send({success:false,error:"Agent run not found, already closed, or belongs to an earlier attempt"},409);
+        return send({success:true,agent_run_id:runId,status,output_ref:outputRef});
+      }
       const stageMatch = url.pathname.match(/^\/jobs\/([0-9a-f-]{36})\/stage$/i);
       if (request.method === "POST" && stageMatch) {
         const body = await request.json().catch(() => null);
@@ -209,12 +259,13 @@ export default {
         const id = match[1];
         const job = await env.DB.prepare("SELECT id,title,format,language,status,current_stage,owner_approval_required,attempt_count,max_attempts,last_failed_stage,next_retry_at,created_at,updated_at FROM production_jobs WHERE id=?").bind(id).first();
         if (!job) return send({success:false,error:"Job not found"},404);
-        const [assets,approvals,attempts] = await Promise.all([
+        const [assets,approvals,attempts,agentRuns] = await Promise.all([
           env.DB.prepare("SELECT id,asset_type,storage_provider,mime_type,size_bytes,created_at FROM production_assets WHERE job_id=? ORDER BY created_at").bind(id).all(),
           env.DB.prepare("SELECT approval_type,decision,notes,decided_at,created_at FROM production_approvals WHERE job_id=? ORDER BY created_at").bind(id).all(),
-          env.DB.prepare("SELECT attempt_number,status,stage,error_message,started_at,finished_at,created_at FROM production_job_attempts WHERE job_id=? ORDER BY attempt_number").bind(id).all()
+          env.DB.prepare("SELECT attempt_number,status,stage,error_message,started_at,finished_at,created_at FROM production_job_attempts WHERE job_id=? ORDER BY attempt_number").bind(id).all(),
+          env.DB.prepare("SELECT id,attempt_number,agent_id,agent_name,stage,status,input_ref,output_ref,error_message,started_at,finished_at,duration_ms,created_at FROM production_agent_runs WHERE job_id=? ORDER BY created_at DESC LIMIT 200").bind(id).all()
         ]);
-        return send({success:true,job:{...job,stage_label:publicStage(job.current_stage)},assets:assets.results,approvals:approvals.results,attempts:attempts.results});
+        return send({success:true,job:{...job,stage_label:publicStage(job.current_stage)},assets:assets.results,approvals:approvals.results,attempts:attempts.results,agent_runs:agentRuns.results});
       }
       return send({success:false,error:"Not found"},404);
     } catch (_) {
