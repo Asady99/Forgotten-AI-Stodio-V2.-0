@@ -40,6 +40,7 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 test("keeps production disabled when no API URL is configured", () => {
   const elements = setup("", () => { throw new Error("fetch should not run"); });
   assert.equal(elements["start-button"].disabled, true);
+  assert.equal(elements["monitor-button"].disabled, true);
   assert.equal(elements["backend-status"].textContent, "Production engine not connected");
 });
 
@@ -50,6 +51,7 @@ test("does not enable production when the backend reports scaffold", async () =>
   }));
   await tick();
   assert.equal(elements["start-button"].disabled, true);
+  assert.equal(elements["monitor-button"].disabled, true);
   assert.equal(elements["backend-status"].textContent, "Production engine unavailable");
 });
 
