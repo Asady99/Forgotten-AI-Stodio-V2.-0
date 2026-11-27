@@ -33,6 +33,7 @@ class FakeDB {
     const db = this;
     let args = [];
     const statement = {
+      sql,
       bind(...values) { args = values; return statement; },
       async first() {
         if (sql.includes("FROM production_jobs WHERE id=?")) return db.jobs.get(args[0]) || null;
