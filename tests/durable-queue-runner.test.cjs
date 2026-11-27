@@ -35,4 +35,6 @@ test("stale or expired queue leases cannot persist agent outputs",()=>{
  assert.match(runner,/q\.lease_token=\?/);
  assert.match(runner,/EXISTS \(SELECT 1 FROM production_agent_runs r WHERE r\.id=\?/);
  assert.match(runner,/EXISTS \(SELECT 1 FROM production_agent_outputs o WHERE o\.id=\?/);
+ assert.equal((runner.match(/WHERE changes\\(\\)!=1/g)||[]).length,1,"one shared sentinel is reused after each guarded write");
+ assert.match(runner,/zero-row write into a SQL error/);
 });
