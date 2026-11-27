@@ -23,14 +23,15 @@ class ProductionMigrationTests(unittest.TestCase):
     def test_creates_all_four_production_tables_and_indexes(self):
         tables = {r[0] for r in self.db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        self.assertTrue({"production_jobs", "production_agent_runs",
+        self.assertTrue({"production_jobs", "production_job_attempts", "production_agent_runs",
                          "production_assets", "production_approvals"}.issubset(tables))
         indexes = {r[0] for r in self.db.execute(
             "SELECT name FROM sqlite_master WHERE type='index'")}
         self.assertTrue({"idx_production_jobs_status_created",
                          "idx_production_agent_runs_job",
                          "idx_production_assets_job",
-                         "idx_production_approvals_job"}.issubset(indexes))
+                         "idx_production_approvals_job",
+                         "idx_production_job_attempts_job"}.issubset(indexes))
 
     def test_job_constraints_and_default_owner_approval(self):
         self.db.execute(
@@ -39,6 +40,10 @@ class ProductionMigrationTests(unittest.TestCase):
             "SELECT status,current_stage,owner_approval_required,language FROM production_jobs WHERE id='j1'"
         ).fetchone()
         self.assertEqual(row, ("queued", "queued", 1, "en"))
+        retry_defaults = self.db.execute(
+            "SELECT attempt_count,max_attempts,last_failed_stage FROM production_jobs WHERE id='j1'"
+        ).fetchone()
+        self.assertEqual(retry_defaults, (1, 3, None))
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(
                 "INSERT INTO production_jobs (id,title,format) VALUES ('j2','Bad','movie')")
@@ -68,6 +73,9 @@ class ProductionMigrationTests(unittest.TestCase):
         self.db.execute(
             "INSERT INTO production_approvals (id,job_id,approval_type,decision) "
             "VALUES ('a1','j1','final_video','pending')")
+        self.db.execute(
+            "INSERT INTO production_job_attempts (id,job_id,attempt_number,status,stage) "
+            "VALUES ('attempt-1','j1',1,'running','queued')")
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(
                 "INSERT INTO production_approvals (id,job_id,approval_type,decision) "
@@ -75,12 +83,14 @@ class ProductionMigrationTests(unittest.TestCase):
         self.db.execute("DELETE FROM production_jobs WHERE id='j1'")
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM production_approvals").fetchone()[0], 0)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM production_job_attempts").fetchone()[0], 0)
 
     def test_migration_can_be_applied_twice_without_schema_errors(self):
         self.db.executescript(self.sql)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'production_%'"
-        ).fetchone()[0], 4)
+        ).fetchone()[0], 5)
 
 if __name__ == "__main__":
     unittest.main()
