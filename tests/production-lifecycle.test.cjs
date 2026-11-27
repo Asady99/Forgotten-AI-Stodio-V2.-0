@@ -250,3 +250,14 @@ test("malformed or non-object JSON bodies return 400 without a server error", as
   }
   assert.equal(db.jobs.size,0);
 });
+
+
+test("simultaneous stage updates from the same stage allow only one transition", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const results=await Promise.all([
+    call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db),
+    call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db)
+  ]);
+  assert.deepEqual(results.map(x=>x.response.status).sort(),[200,409]);
+  assert.equal(db.jobs.get(id).current_stage,"researching");
+});
