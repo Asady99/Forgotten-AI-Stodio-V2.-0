@@ -26,7 +26,7 @@ async function heartbeat(db,item,owner){
  return r.meta?.changes===1;
 }
 async function failDelivery(db,item,owner,error){
- const message=safeError(error),terminal=(item.failure_count+1)>=item.max_deliveries,delay=Math.min(300,15*(2**Math.max(0,item.delivery_count-1)));
+ const message=safeError(error),terminal=(item.failure_count+1)>=item.max_deliveries,delay=Math.min(300,15*(2**Math.max(0,item.failure_count)));
  const writes=[
   db.prepare("UPDATE production_queue SET status=?,failure_count=failure_count+1,available_at=datetime('now',?),lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=CURRENT_TIMESTAMP,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='leased' AND lease_owner=? AND lease_token=?").bind(terminal?"dead":"pending",terminal?"+0 seconds":"+"+delay+" seconds",message,item.id,owner,item.lease_token)
  ];
