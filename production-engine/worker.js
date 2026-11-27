@@ -86,10 +86,26 @@ export default {
         const language = ["en","ur","es"].includes(body.language) ? body.language : "en";
         if (!title) return send({success:false,error:"A topic is required"},400);
         if (format !== "documentary" && format !== "short") return send({success:false,error:"Invalid production format"},400);
+        const projectId = body.project_id === undefined || body.project_id === null ? null : body.project_id;
+        const topicId = body.topic_id === undefined || body.topic_id === null ? null : body.topic_id;
+        if (projectId !== null && (!Number.isSafeInteger(projectId) || projectId < 1)) {
+          return send({success:false,error:"Invalid project_id"},400);
+        }
+        if (topicId !== null && (!Number.isSafeInteger(topicId) || topicId < 1)) {
+          return send({success:false,error:"Invalid topic_id"},400);
+        }
+        if (projectId !== null) {
+          const project = await env.DB.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first();
+          if (!project) return send({success:false,error:"Project not found"},404);
+        }
+        if (topicId !== null) {
+          const topic = await env.DB.prepare("SELECT id FROM topics WHERE id=?").bind(topicId).first();
+          if (!topic) return send({success:false,error:"Topic not found"},404);
+        }
         const id = crypto.randomUUID();
         const created = await env.DB.batch([
           env.DB.prepare("INSERT INTO production_jobs (id,project_id,topic_id,title,format,language,status,current_stage,owner_approval_required) VALUES (?,?,?,?,?,?,'queued','queued',1)")
-            .bind(id,Number.isInteger(body.project_id)?body.project_id:null,Number.isInteger(body.topic_id)?body.topic_id:null,title,format,language),
+            .bind(id,projectId,topicId,title,format,language),
           env.DB.prepare("INSERT INTO production_approvals (id,job_id,approval_type,decision) VALUES (?,?,'final_video','pending')")
             .bind(crypto.randomUUID(),id)
         ]);
