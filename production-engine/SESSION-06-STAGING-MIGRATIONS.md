@@ -8,6 +8,7 @@ Date: 2026-11-27
   1. `001_production_jobs.sql`
   2. `002_durable_queue.sql`
   3. `003_queue_failure_count.sql`
+  4. `004_staging_reference_compatibility.sql`
   4. `004_staging_reference_compatibility.sql` — supplies minimal `projects`/`topics` parent keys only when absent; existing application tables and rows are preserved.
 - Verified 7 application tables, 8 indexes, 2 queue triggers, and `production_queue.failure_count` with NOT NULL/default 0.
 - `PRAGMA foreign_key_check` returned no violations.
@@ -25,30 +26,29 @@ Date: 2026-11-27
 
 ## Automated verification — passed
 Latest GitHub Actions run:
-- Run #144 / ID `45983800287`: SUCCESS.
+- Run #152 / ID `46007313386`: SUCCESS.
 - Node test suite: 50 passed, 0 failed.
-- SQLite migration suite: 12 passed, 0 failed.
+- SQLite migration suite: 13 passed, 0 failed, including the standalone staging regression.
 - Includes stale/expired lease protections for output persistence and terminal failure state, queue retry behavior, owner approval gates, and migration constraints.
 - The final CI run used the corrected test assertion; the earlier 49/50 result was superseded.
 
-## Staging schema compatibility correction
+## Staging schema compatibility correction — applied
 - The first disposable-job insert was blocked because the isolated D1 database did not contain the host application's `projects` and `topics` parent tables referenced by nullable columns in `production_jobs`.
 - Added migration `004_staging_reference_compatibility.sql`. It uses `CREATE TABLE IF NOT EXISTS` with only integer primary keys, so existing application tables and data are untouched while standalone staging gets valid FK parents.
 - Added an isolated-database regression test that applies all four migrations without host tables, inserts a job, verifies automatic queueing and checks foreign-key integrity.
-- This correction is committed to the PR branch; it has not yet been applied to the live staging D1 database. Runtime test remains blocked until CI passes and the owner-authorized staging migration is applied.
+- Applied the two `CREATE TABLE IF NOT EXISTS` statements to the isolated staging D1 database; both parent tables now exist and the migration did not touch production resources.
 
 ## Runtime verification — still pending
 - Direct HTTP smoke requests from the available execution environment returned a blocked/forbidden response. Therefore public `/health` behavior and unauthenticated `/internal/tick` returning 401 have not been verified from an allowed HTTP client.
-- No staging job has been created and no authenticated tick has been executed.
-- Read-only D1 checks previously confirmed zero jobs, queue rows, agent runs, and agent outputs. SQL explain checks did not mutate data.
+- One disposable staging job `staging-smoke-20261127-01` and its initial attempt were created after explicit owner approval.
+- Current verified state: job `queued`; queue `pending`; delivery_count=0; failure_count=0; agent runs=0; outputs=0; foreign_key_check returned no violations.
+- The authenticated tick has NOT yet been executed. The secret value is not accessible to the connected Cloudflare API, so it cannot be sent from this tool without an owner-side HTTP request.
 - Do not treat successful deployment or CI as proof that a live Workers AI job works.
 
 ## Controlled next steps
-1. From an allowed HTTP client, verify `GET /health` and an unauthenticated `POST /internal/tick` returns 401.
-2. Create/replace the staging `RUNNER_TOKEN` directly in Cloudflare Dashboard and save its value securely outside chat. Cloudflare does not reveal an existing secret value.
-3. After explicit owner approval, create one disposable staging job and execute one authenticated tick.
-4. Inspect persisted stage, attempt, run and output records; then test retry and lease recovery only with separate bounded staging checks.
-5. Keep Cron disabled until all manual checks pass.
+1. From the staging Worker's dashboard Quick Edit HTTP panel, send one `POST /internal/tick` with `Authorization: Bearer <RUNNER_TOKEN>` and an empty JSON body. Keep the dashboard context on the staging Worker; do not use any production Worker.
+2. Inspect the returned response and D1 stage, attempt, run and output records.
+3. Keep Cron disabled until all manual checks pass.
 
 ## Safety and scope
 - The Runner uses one Workers AI model for nine prompt-driven stages; these are not nine separately hosted models/agents.
