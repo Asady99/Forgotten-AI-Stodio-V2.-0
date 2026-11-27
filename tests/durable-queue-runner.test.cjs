@@ -8,3 +8,17 @@ test("all nine production stages have named agents and sequential next stages",(
 test("runner persists bounded outputs and attempt-scoped agent runs",()=>{assert.match(runner,/INSERT INTO production_agent_outputs/);assert.match(runner,/INSERT INTO production_agent_runs/);assert.match(runner,/output\.slice\(0,24000\)/);});
 test("queue triggers enqueue new jobs and reset queue on retry",()=>{assert.match(migration,/trg_production_jobs_enqueue/);assert.match(migration,/trg_production_jobs_retry_enqueue/);assert.match(migration,/ON CONFLICT\(job_id\) DO UPDATE/);});
 test("final stage stops at owner approval and cannot publish",()=>{assert.match(runner,/awaiting_owner_approval/);assert.match(runner,/publishing:false/);assert.doesNotMatch(runner,/youtube\.com\/upload|publishVideo/i);});
+
+test("retry budget counts failed executions, not successful queue stage deliveries",()=>{
+ assert.match(runner,/failure_count, max_deliveries/);
+ assert.match(runner,/item\\.failure_count\\+1>=item\\.max_deliveries/);
+ assert.match(runner,/failure_count=failure_count\\+1/);
+});
+test("staging example has no scheduled trigger and smoke test never sends credentials",()=>{
+ const config=fs.readFileSync(path.join(__dirname,"..","wrangler.runner.staging.example.toml"),"utf8");
+ const smoke=fs.readFileSync(path.join(__dirname,"..","scripts","runner-staging-smoke.mjs"),"utf8");
+ assert.doesNotMatch(config,/crons\\s*=/);
+ assert.match(config,/REPLACE_WITH_STAGING_D1_DATABASE_ID/);
+ assert.doesNotMatch(smoke,/Authorization|RUNNER_TOKEN/);
+ assert.match(smoke,/mutating_tick_invoked:false/);
+});
