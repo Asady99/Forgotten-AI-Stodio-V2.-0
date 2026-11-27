@@ -27,12 +27,18 @@ async function heartbeat(db,item,owner){
 }
 async function failDelivery(db,item,owner,error){
  const message=safeError(error),terminal=(item.failure_count+1)>=item.max_deliveries,delay=Math.min(300,15*(2**Math.max(0,item.failure_count)));
+ // A stale worker must not change queue, job or attempt state after its lease expires.
+ // The sentinel makes a zero-row guarded write abort and roll back this whole batch.
+ const requireOneChange=db.prepare("INSERT INTO production_agent_runs(id,job_id,attempt_number,agent_name,stage,status) SELECT NULL,NULL,1,'guard','guard','failed' WHERE changes()!=1");
  const writes=[
-  db.prepare("UPDATE production_queue SET status=?,failure_count=failure_count+1,available_at=datetime('now',?),lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=CURRENT_TIMESTAMP,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='leased' AND lease_owner=? AND lease_token=?").bind(terminal?"dead":"pending",terminal?"+0 seconds":"+"+delay+" seconds",message,item.id,owner,item.lease_token)
+  db.prepare("UPDATE production_queue SET status=?,failure_count=failure_count+1,available_at=datetime('now',?),lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=CURRENT_TIMESTAMP,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='leased' AND lease_owner=? AND lease_token=? AND lease_expires_at>CURRENT_TIMESTAMP").bind(terminal?"dead":"pending",terminal?"+0 seconds":"+"+delay+" seconds",message,item.id,owner,item.lease_token),
+  requireOneChange
  ];
  if(terminal){
-  writes.push(db.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status NOT IN ('approved','rejected','awaiting_owner_approval')").bind(message,item.job_id));
-  writes.push(db.prepare("UPDATE production_job_attempts SET status='failed',stage='failed',error_message=?,finished_at=CURRENT_TIMESTAMP WHERE job_id=? AND status='running'").bind(message,item.job_id));
+  writes.push(db.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status NOT IN ('approved','rejected','awaiting_owner_approval') AND EXISTS (SELECT 1 FROM production_queue q WHERE q.id=? AND q.job_id=production_jobs.id AND q.status='dead')").bind(message,item.job_id,item.id));
+  writes.push(requireOneChange);
+  writes.push(db.prepare("UPDATE production_job_attempts SET status='failed',stage='failed',error_message=?,finished_at=CURRENT_TIMESTAMP WHERE job_id=? AND status='running' AND EXISTS (SELECT 1 FROM production_jobs j WHERE j.id=production_job_attempts.job_id AND j.status='failed') AND EXISTS (SELECT 1 FROM production_queue q WHERE q.id=? AND q.job_id=production_job_attempts.job_id AND q.status='dead')").bind(message,item.job_id,item.id));
+  writes.push(requireOneChange);
  }
  await db.batch(writes);
  return {status:terminal?"dead":"retry_scheduled",error:message,retry_in_seconds:terminal?0:delay};
