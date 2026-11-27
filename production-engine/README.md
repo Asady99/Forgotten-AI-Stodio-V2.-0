@@ -59,6 +59,7 @@ A 60–90 second Short and a 3–5 minute image-led documentary must each comple
 - `GET /jobs` and `GET /jobs/:id`: return production status, asset metadata and approval state; owner credential required; internal agent logs are not exposed in the dashboard response.
 - `POST /jobs/:id/stage`: requires a separate orchestrator credential; only the next sequential stage is accepted. A failed stage records the failed stage and closes the current attempt. It cannot approve or reject a video.
 - `POST /jobs/:id/retry`: requires the orchestrator credential; only failed jobs can be retried, up to the job's persisted `max_attempts` limit (default 3, schema constrained to 1–10). Retry creation and the job reset use a conditional D1 batch so concurrent retry requests cannot create duplicate attempts.
+- Retry uses persisted exponential backoff: 30 seconds after attempt 1, 60 seconds after attempt 2, and 120 seconds after attempt 3 (capped at 300 seconds for future higher limits). Early retries return HTTP 429 with the UTC `retry_after` timestamp.
 - `GET /jobs/:id`: includes the bounded attempt history (attempt number, status, last stage, failure message and timestamps) for owner monitoring.
 - `POST /jobs/:id/approval`: requires a separate owner credential and is accepted only while the job is awaiting owner approval. Publishing remains a separate action and is not implemented.
 
