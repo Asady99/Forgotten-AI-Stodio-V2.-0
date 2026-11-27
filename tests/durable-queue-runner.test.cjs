@@ -10,9 +10,10 @@ test("queue triggers enqueue new jobs and reset queue on retry",()=>{assert.matc
 test("final stage stops at owner approval and cannot publish",()=>{assert.match(runner,/awaiting_owner_approval/);assert.match(runner,/publishing:false/);assert.doesNotMatch(runner,/youtube\.com\/upload|publishVideo/i);});
 
 test("retry budget counts failed executions, not successful queue stage deliveries",()=>{
- assert.match(runner,/failure_count, max_deliveries/);
- assert.match(runner,/item\\.failure_count\\+1>=item\\.max_deliveries/);
- assert.match(runner,/failure_count=failure_count\\+1/);
+ assert.ok(runner.includes("failure_count,max_deliveries"));
+ assert.ok(runner.includes("item.failure_count+1>=item.max_deliveries"));
+ assert.ok(runner.includes("failure_count=failure_count+1"));
+ assert.ok(runner.includes("item.failure_count)))"));
 });
 test("staging example has no scheduled trigger and smoke test never sends credentials",()=>{
  const config=fs.readFileSync(path.join(__dirname,"..","wrangler.runner.staging.example.toml"),"utf8");
