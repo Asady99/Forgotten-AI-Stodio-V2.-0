@@ -28,6 +28,7 @@ class FakeDB {
     this.jobs = new Map();
     this.approvals = new Map();
     this.assets = new Map();
+    this.attempts = new Map();
     this.projects = new Set([1]);
     this.topics = new Set(Array.from({length:96},(_,i)=>i+1));
   }
@@ -50,6 +51,7 @@ class FakeDB {
         if (sql.includes("FROM production_jobs ORDER BY")) return {results:[...db.jobs.values()]};
         if (sql.includes("FROM production_assets")) return {results:[...(db.assets.get(args[0]) || [])]};
         if (sql.includes("FROM production_approvals")) return {results:[...db.approvals.values()].filter(a=>a.job_id===args[0])};
+        if (sql.includes("FROM production_job_attempts")) return {results:[...db.attempts.values()].filter(a=>a.job_id===args[0]).sort((a,b)=>a.attempt_number-b.attempt_number)};
         return {results:[]};
       },
       async run() {
@@ -68,15 +70,48 @@ class FakeDB {
     return statement;
   }
   async batch(statements) {
-    if (statements.length === 2 && statements[0].sql?.startsWith("INSERT INTO production_jobs")) {
-      const [jobStmt, approvalStmt] = statements;
+    const firstSql=statements[0]?.sql || "";
+    if (statements.length === 3 && firstSql.startsWith("INSERT INTO production_jobs")) {
+      const [jobStmt, approvalStmt, attemptStmt] = statements;
       const [id,project_id,topic_id,title,format,language] = jobStmt.__args || [];
       const [approvalId,jobId] = approvalStmt.__args || [];
-      this.jobs.set(id,{id,project_id,topic_id,title,format,language,status:"queued",current_stage:"queued",owner_approval_required:1});
+      const [attemptId,attemptJobId] = attemptStmt.__args || [];
+      this.jobs.set(id,{id,project_id,topic_id,title,format,language,status:"queued",current_stage:"queued",owner_approval_required:1,attempt_count:1,max_attempts:3,last_failed_stage:null});
       this.approvals.set(approvalId,{id:approvalId,job_id:jobId,approval_type:"final_video",decision:"pending"});
+      this.attempts.set(attemptId,{id:attemptId,job_id:attemptJobId,attempt_number:1,status:"running",stage:"queued",error_message:null});
+      return [{meta:{changes:1}},{meta:{changes:1}},{meta:{changes:1}}];
+    }
+    if (statements.length === 2 && firstSql.startsWith("INSERT INTO production_job_attempts")) {
+      const [attemptId,jobId]=statements[0].__args;
+      const job=this.jobs.get(jobId);
+      if (!job || job.status!=="failed" || job.attempt_count>=job.max_attempts) return [{meta:{changes:0}},{meta:{changes:0}}];
+      const number=job.attempt_count+1;
+      this.attempts.set(attemptId,{id:attemptId,job_id:jobId,attempt_number:number,status:"running",stage:"queued",error_message:null});
+      if (job.status!=="failed" || job.attempt_count>=job.max_attempts || !this.attempts.has(attemptId)) return [{meta:{changes:1}},{meta:{changes:0}}];
+      Object.assign(job,{status:"queued",current_stage:"queued",attempt_count:number,last_failed_stage:null,error_message:null});
       return [{meta:{changes:1}},{meta:{changes:1}}];
     }
-    if (statements.length === 2 && statements[0].sql?.startsWith("UPDATE production_jobs SET status=?")) {
+    if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status='failed'")) {
+      const [error,id,status,stage,jobId,attemptNumber,attemptStage]=statements[0].__args;
+      const [attemptError,attemptJobId,attemptNo,attemptOldStage]=statements[1].__args;
+      const job=this.jobs.get(id);
+      const attempt=[...this.attempts.values()].find(a=>a.job_id===attemptJobId && a.attempt_number===attemptNo);
+      if (!job || !attempt || job.status!==status || job.current_stage!==stage || job.attempt_count!==attemptNumber || attempt.status!=="running" || attempt.stage!==attemptStage || attemptOldStage!==stage) return [{meta:{changes:0}},{meta:{changes:0}}];
+      Object.assign(job,{status:"failed",current_stage:"failed",last_failed_stage:stage,error_message:error});
+      Object.assign(attempt,{status:"failed",error_message:attemptError});
+      return [{meta:{changes:1}},{meta:{changes:1}}];
+    }
+    if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status=?,current_stage=?")) {
+      const [status,stage,id,oldStage,oldStatus,jobId,attemptNumber,attemptStage]=statements[0].__args;
+      const [attemptStageNew,finalStage,finalStage2,attemptJobId,attemptNo,attemptOldStage]=statements[1].__args;
+      const job=this.jobs.get(id);
+      const attempt=[...this.attempts.values()].find(a=>a.job_id===attemptJobId && a.attempt_number===attemptNo);
+      if (!job || !attempt || job.current_stage!==oldStage || job.status!==oldStatus || job.attempt_count!==attemptNumber || attempt.status!=="running" || attempt.stage!==attemptStage || attemptOldStage!==oldStage) return [{meta:{changes:0}},{meta:{changes:0}}];
+      Object.assign(job,{status,current_stage:stage,error_message:null});
+      Object.assign(attempt,{stage:attemptStageNew,status:finalStage==="awaiting_owner_approval" ? "succeeded":"running"});
+      return [{meta:{changes:1}},{meta:{changes:1}}];
+    }
+    if (statements.length === 2 && firstSql.startsWith("UPDATE production_jobs SET status=?")) {
       const [decision,stage,jobId,approvalId,approvalJobId] = statements[0].__args;
       const [approvalDecision,notes,approvalId2,approvalJobId2,jobId2,jobStatus] = statements[1].__args;
       const job=this.jobs.get(jobId), approval=this.approvals.get(approvalId);
@@ -90,7 +125,7 @@ class FakeDB {
       Object.assign(approval,{decision:approvalDecision,notes});
       return [{meta:{changes:1}},{meta:{changes:1}}];
     }
-    return [{meta:{changes:0}},{meta:{changes:0}}];
+    return statements.map(()=>({meta:{changes:0}}));
   }
 }
 
@@ -199,13 +234,63 @@ test("unknown stages and invalid approval decisions are rejected", async () => {
   assert.equal(approval.response.status,400);
 });
 
-test("failed jobs are terminal and cannot advance", async () => {
+async function failCurrentAttempt(db,id,error="test failure") {
+  const result=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"failed",error},db);
+  assert.equal(result.response.status,200);
+  return result;
+}
+
+test("failed jobs preserve attempt history and can be retried once", async () => {
   const db=makeDB(), id=await createJob(db);
-  const fail=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"failed",error:"test failure"},db);
-  assert.equal(fail.response.status,200);
-  const retry=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db);
-  assert.equal(retry.response.status,409);
-  assert.equal(db.jobs.get(id).status,"failed");
+  await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db);
+  await failCurrentAttempt(db,id,"research provider unavailable");
+  let job=db.jobs.get(id);
+  assert.equal(job.status,"failed");
+  assert.equal(job.last_failed_stage,"researching");
+  assert.equal(db.attempts.get([...db.attempts.keys()][0]).status,"failed");
+  const retry=await call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db);
+  assert.equal(retry.response.status,200);
+  assert.equal(retry.body.status,"queued");
+  assert.equal(retry.body.attempt_count,2);
+  assert.equal(retry.body.attempts_remaining,1);
+  job=db.jobs.get(id);
+  assert.equal(job.status,"queued");
+  assert.equal(job.current_stage,"queued");
+  assert.equal(job.attempt_count,2);
+  assert.equal([...db.attempts.values()].length,2);
+  assert.equal([...db.attempts.values()].find(a=>a.attempt_number===2).status,"running");
+  const next=await call("/jobs/"+id+"/stage","POST",ORCHESTRATOR,{stage:"researching"},db);
+  assert.equal(next.response.status,200);
+});
+
+test("retry rejects jobs that are not failed and enforces the configured maximum", async () => {
+  const db=makeDB(), id=await createJob(db);
+  const notFailed=await call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db);
+  assert.equal(notFailed.response.status,409);
+  for (let attempt=1; attempt<=3; attempt++) {
+    await failCurrentAttempt(db,id,"attempt "+attempt+" failed");
+    if (attempt<3) {
+      const retry=await call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db);
+      assert.equal(retry.response.status,200);
+    }
+  }
+  const exhausted=await call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db);
+  assert.equal(exhausted.response.status,409);
+  assert.equal(exhausted.body.error,"Retry limit reached");
+  assert.equal(db.jobs.get(id).attempt_count,3);
+  assert.equal([...db.attempts.values()].length,3);
+});
+
+test("simultaneous retry requests allow only one new attempt", async () => {
+  const db=makeDB(), id=await createJob(db);
+  await failCurrentAttempt(db,id);
+  const results=await Promise.all([
+    call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db),
+    call("/jobs/"+id+"/retry","POST",ORCHESTRATOR,undefined,db)
+  ]);
+  assert.deepEqual(results.map(x=>x.response.status).sort(),[200,409]);
+  assert.equal(db.jobs.get(id).attempt_count,2);
+  assert.equal([...db.attempts.values()].length,2);
 });
 
 test("owner approval updates job and approval record together after final review", async () => {
