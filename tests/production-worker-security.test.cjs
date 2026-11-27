@@ -78,3 +78,29 @@ test("CORS preflight is allowed only for the exact configured studio origin", as
   assert.equal(response.headers.get("Access-Control-Allow-Credentials"), "true");
   assert.equal(response.headers.get("Access-Control-Allow-Methods"), "GET, POST, OPTIONS");
 });
+
+test("Cloudflare Access identity authorizes only the configured owner email", async () => {
+  const ownerRequest=request("https://engine.test/jobs");
+  const allowed=await invoke(ownerRequest,{STUDIO_OWNER_EMAIL:"OWNER@example.com"},{
+    access:{getIdentity:async()=>({email:"owner@example.com"})}
+  });
+  assert.equal(allowed.status,500); // Auth passed; missing DB is handled by the protected route.
+  const denied=await invoke(request("https://engine.test/jobs"),{STUDIO_OWNER_EMAIL:"owner@example.com"},{
+    access:{getIdentity:async()=>({email:"someone-else@example.com"})}
+  });
+  assert.equal(denied.status,401);
+});
+
+test("Cloudflare Access identity lookup failure does not bypass owner authentication", async () => {
+  const response=await invoke(request("https://engine.test/jobs"),{STUDIO_OWNER_EMAIL:"owner@example.com"},{
+    access:{getIdentity:async()=>{throw new Error("identity unavailable");}}
+  });
+  assert.equal(response.status,401);
+});
+
+test("unsupported HTTP methods are not exposed as public routes", async () => {
+  const response=await invoke(request("https://engine.test/jobs","DELETE"),{
+    STUDIO_OWNER_TOKEN:"owner-secret"
+  });
+  assert.equal(response.status,401);
+});
