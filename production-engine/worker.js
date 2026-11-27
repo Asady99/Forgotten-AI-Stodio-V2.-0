@@ -184,7 +184,7 @@ export default {
           const errorMessage = String(body.error || "Production stage failed").slice(0,1000);
           const retryDelaySeconds = Math.min(300,30 * (2 ** (job.attempt_count - 1)));
           const failed = await env.DB.batch([
-            env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,next_retry_at=datetime(CURRENT_TIMESTAMP,'+' || ? || ' seconds'),error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=? AND current_stage=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?)")
+            env.DB.prepare("UPDATE production_jobs SET status='failed',current_stage='failed',last_failed_stage=current_stage,next_retry_at=strftime('%Y-%m-%dT%H:%M:%fZ',CURRENT_TIMESTAMP,'+' || ? || ' seconds'),error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=? AND current_stage=? AND EXISTS (SELECT 1 FROM production_job_attempts WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?)")
               .bind(retryDelaySeconds,errorMessage,id,job.status,job.current_stage,id,job.attempt_count,job.current_stage),
             env.DB.prepare("UPDATE production_job_attempts SET status='failed',error_message=?,finished_at=CURRENT_TIMESTAMP WHERE job_id=? AND attempt_number=? AND status='running' AND stage=?")
               .bind(errorMessage,id,job.attempt_count,job.current_stage)
