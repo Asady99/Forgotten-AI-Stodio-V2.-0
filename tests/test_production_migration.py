@@ -86,6 +86,29 @@ class ProductionMigrationTests(unittest.TestCase):
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM production_job_attempts").fetchone()[0], 0)
 
+    def test_agent_run_schema_tracks_attempts_references_and_duration(self):
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(production_agent_runs)")}
+        self.assertTrue({"attempt_number", "input_ref", "output_ref", "duration_ms"}.issubset(columns))
+        indexes = {row[0] for row in self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'")}
+        self.assertIn("idx_production_agent_runs_attempt", indexes)
+        self.db.execute("INSERT INTO production_jobs (id,title,format) VALUES ('job-run','Run test','short')")
+        self.db.execute(
+            "INSERT INTO production_agent_runs (id,job_id,attempt_number,agent_name,stage,status,input_ref) "
+            "VALUES ('run-1','job-run',1,'Research Agent','queued','running','research:topic-1')")
+        row = self.db.execute(
+            "SELECT attempt_number,input_ref,status FROM production_agent_runs WHERE id='run-1'"
+        ).fetchone()
+        self.assertEqual(row, (1, "research:topic-1", "running"))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO production_agent_runs (id,job_id,attempt_number,agent_name,stage,duration_ms) "
+                "VALUES ('run-bad','job-run',1,'Bad Agent','queued',-1)")
+        self.db.execute("DELETE FROM production_jobs WHERE id='job-run'")
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM production_agent_runs WHERE job_id='job-run'"
+        ).fetchone()[0], 0)
+
     def test_migration_can_be_applied_twice_without_schema_errors(self):
         self.db.executescript(self.sql)
         self.assertEqual(self.db.execute(
